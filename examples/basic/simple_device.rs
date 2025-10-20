@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     device.model_name = "Simple Demo Device".to_string();
 
     println!("Created device: {}", device.object_name);
-    println!("Device instance: {}", device.identifier.instance);
+    println!("Device instance: {}", device.identifier().instance);
     println!("Vendor: {}", device.vendor_name);
 
     // Create BACnet/IP data link

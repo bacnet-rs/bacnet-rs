@@ -4,8 +4,8 @@
 //! as defined in ASHRAE 135. These objects represent binary (two-state) values in BACnet.
 
 use crate::object::{
-    object_name::ObjectName, BacnetObject, EventState, ObjectError, ObjectIdentifier, ObjectType,
-    PropertyIdentifier, PropertyValue, Reliability, Result,
+    object_name::ObjectName, BacnetObject, EventState, GetObjectIdentifier, ObjectError,
+    ObjectType, PropertyIdentifier, PropertyValue, Reliability, Result,
 };
 
 #[cfg(not(feature = "std"))]
@@ -46,8 +46,8 @@ pub enum Polarity {
 /// Binary Input object
 #[derive(Debug, Clone)]
 pub struct BinaryInput<O> {
-    /// Object identifier
-    pub identifier: ObjectIdentifier,
+    /// Object instance number
+    pub instance: u32,
     /// Object name
     pub object_name: O,
     /// Present value
@@ -81,8 +81,8 @@ pub struct BinaryInput<O> {
 /// Binary Output object
 #[derive(Debug, Clone)]
 pub struct BinaryOutput<O> {
-    /// Object identifier
-    pub identifier: ObjectIdentifier,
+    /// Object instance number
+    pub instance: u32,
     /// Object name
     pub object_name: O,
     /// Present value
@@ -118,8 +118,8 @@ pub struct BinaryOutput<O> {
 /// Binary Value object
 #[derive(Debug, Clone)]
 pub struct BinaryValue<O> {
-    /// Object identifier
-    pub identifier: ObjectIdentifier,
+    /// Object instance number
+    pub instance: u32,
     /// Object name
     pub object_name: O,
     /// Present value
@@ -148,7 +148,7 @@ impl<O> BinaryInput<O> {
     /// Create a new Binary Input object
     pub fn new(instance: u32, object_name: O) -> Self {
         Self {
-            identifier: ObjectIdentifier::new(ObjectType::BinaryInput, instance),
+            instance,
             object_name,
             present_value: BinaryPV::Inactive,
             description: String::new(),
@@ -213,7 +213,7 @@ impl<O> BinaryOutput<O> {
     /// Create a new Binary Output object
     pub fn new(instance: u32, object_name: O) -> Self {
         Self {
-            identifier: ObjectIdentifier::new(ObjectType::BinaryOutput, instance),
+            instance,
             object_name,
             present_value: BinaryPV::Inactive,
             description: String::new(),
@@ -270,7 +270,7 @@ impl<O> BinaryValue<O> {
     /// Create a new Binary Value object
     pub fn new(instance: u32, object_name: O) -> Self {
         Self {
-            identifier: ObjectIdentifier::new(ObjectType::BinaryValue, instance),
+            instance,
             object_name,
             present_value: BinaryPV::Inactive,
             description: String::new(),
@@ -309,14 +309,19 @@ impl<O> BinaryValue<O> {
     }
 }
 
+impl<O> GetObjectIdentifier for BinaryInput<O> {
+    fn instance(&self) -> u32 {
+        self.instance
+    }
+    fn object_type(&self) -> ObjectType {
+        ObjectType::BinaryInput
+    }
+}
+
 impl<O> BacnetObject for BinaryInput<O>
 where
     O: ObjectName,
 {
-    fn identifier(&self) -> ObjectIdentifier {
-        self.identifier
-    }
-
     fn object_name(&self) -> &dyn ObjectName {
         &self.object_name
     }
@@ -324,7 +329,7 @@ where
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
             PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
+                Ok(PropertyValue::ObjectIdentifier(self.identifier()))
             }
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.to_string()))
@@ -381,14 +386,19 @@ where
     }
 }
 
+impl<O> GetObjectIdentifier for BinaryOutput<O> {
+    fn instance(&self) -> u32 {
+        self.instance
+    }
+    fn object_type(&self) -> ObjectType {
+        ObjectType::BinaryOutput
+    }
+}
+
 impl<O> BacnetObject for BinaryOutput<O>
 where
     O: ObjectName,
 {
-    fn identifier(&self) -> ObjectIdentifier {
-        self.identifier
-    }
-
     fn object_name(&self) -> &dyn ObjectName {
         &self.object_name
     }
@@ -396,7 +406,7 @@ where
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
             PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
+                Ok(PropertyValue::ObjectIdentifier(self.identifier()))
             }
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.to_string()))
@@ -484,14 +494,19 @@ where
     }
 }
 
+impl<O> GetObjectIdentifier for BinaryValue<O> {
+    fn instance(&self) -> u32 {
+        self.instance
+    }
+    fn object_type(&self) -> ObjectType {
+        ObjectType::BinaryValue
+    }
+}
+
 impl<O> BacnetObject for BinaryValue<O>
 where
     O: ObjectName,
 {
-    fn identifier(&self) -> ObjectIdentifier {
-        self.identifier
-    }
-
     fn object_name(&self) -> &dyn ObjectName {
         &self.object_name
     }
@@ -499,7 +514,7 @@ where
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
             PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
+                Ok(PropertyValue::ObjectIdentifier(self.identifier()))
             }
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.to_string()))
@@ -602,7 +617,7 @@ mod tests {
     #[test]
     fn test_binary_input_creation() {
         let bi = BinaryInput::new(1, "Door Switch".to_string());
-        assert_eq!(bi.identifier.instance, 1);
+        assert_eq!(bi.identifier().instance, 1);
         assert_eq!(bi.object_name, "Door Switch");
         assert_eq!(bi.present_value, BinaryPV::Inactive);
         assert_eq!(bi.change_of_state_count, 0);

@@ -5,7 +5,7 @@
 //! and AtomicWriteFile services.
 
 use crate::object::{
-    object_name::ObjectName, BacnetObject, ObjectError, ObjectIdentifier, ObjectType,
+    object_name::ObjectName, BacnetObject, GetObjectIdentifier, ObjectError, ObjectType,
     PropertyIdentifier, PropertyValue, Result,
 };
 
@@ -23,8 +23,8 @@ pub enum FileAccessMethod {
 /// File object implementation
 #[derive(Debug, Clone)]
 pub struct File<O> {
-    /// Object identifier
-    pub identifier: ObjectIdentifier,
+    /// Object instance number
+    pub instance: u32,
     /// Object name
     pub object_name: O,
     /// File type (MIME type or file extension)
@@ -51,7 +51,7 @@ impl<O> File<O> {
     /// Create a new File object
     pub fn new(instance: u32, object_name: O, file_type: String) -> Self {
         Self {
-            identifier: ObjectIdentifier::new(ObjectType::File, instance),
+            instance,
             object_name,
             file_type,
             file_size: 0,
@@ -184,14 +184,19 @@ impl<O> File<O> {
     }
 }
 
+impl<O> GetObjectIdentifier for File<O> {
+    fn instance(&self) -> u32 {
+        self.instance
+    }
+    fn object_type(&self) -> ObjectType {
+        ObjectType::File
+    }
+}
+
 impl<O> BacnetObject for File<O>
 where
     O: ObjectName,
 {
-    fn identifier(&self) -> ObjectIdentifier {
-        self.identifier
-    }
-
     fn object_name(&self) -> &dyn ObjectName {
         &self.object_name
     }
@@ -199,7 +204,7 @@ where
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
             PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
+                Ok(PropertyValue::ObjectIdentifier(self.identifier()))
             }
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.to_string()))
@@ -259,7 +264,7 @@ mod tests {
     #[test]
     fn test_file_creation() {
         let file = File::new(1, "config.txt".to_string(), "text/plain".to_string());
-        assert_eq!(file.identifier.instance, 1);
+        assert_eq!(file.identifier().instance, 1);
         assert_eq!(file.object_name, "config.txt");
         assert_eq!(file.file_type, "text/plain");
         assert_eq!(file.file_size, 0);
