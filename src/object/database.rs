@@ -13,6 +13,9 @@ use std::{
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, collections::BTreeMap as HashMap, string::String, sync::Arc, vec::Vec};
 
+#[cfg(feature = "std")]
+use crate::object::object_name::ObjectName;
+
 use super::{
     BacnetObject, Device, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier,
     PropertyValue, Result,
@@ -26,7 +29,7 @@ pub struct ObjectDatabase {
     /// Index by object type for fast lookup
     type_index: Arc<RwLock<HashMap<ObjectType, Vec<ObjectIdentifier>>>>,
     /// Object name index for fast lookup by name
-    name_index: Arc<RwLock<HashMap<String, ObjectIdentifier>>>,
+    name_index: Arc<RwLock<HashMap<Box<dyn ObjectName>, ObjectIdentifier>>>,
     /// Database revision (incremented on changes)
     revision: Arc<RwLock<u32>>,
     /// Last modification time
@@ -38,7 +41,7 @@ pub struct ObjectDatabase {
 #[cfg(feature = "std")]
 impl ObjectDatabase {
     /// Create a new object database with a device object
-    pub fn new(device: Device) -> Self {
+    pub fn new(device: Device<Box<dyn ObjectName>>) -> Self {
         let device_id = device.identifier();
         let mut objects = HashMap::new();
         let mut type_index = HashMap::new();
@@ -80,10 +83,7 @@ impl ObjectDatabase {
         }
 
         // Get object name for indexing
-        let object_name = match object.get_property(PropertyIdentifier::ObjectName)? {
-            PropertyValue::CharacterString(name) => name,
-            _ => return Err(ObjectError::InvalidPropertyType),
-        };
+        let object_name = dyn_clone::clone_box(object.object_name());
 
         // Update all indices and storage atomically
         {
@@ -121,10 +121,8 @@ impl ObjectDatabase {
         let object_name = {
             let objects = self.objects.read().unwrap();
             match objects.get(&identifier) {
-                Some(obj) => match obj.get_property(PropertyIdentifier::ObjectName)? {
-                    PropertyValue::CharacterString(name) => name,
-                    _ => return Err(ObjectError::InvalidPropertyType),
-                },
+                // clone to avoid holding the read lock
+                Some(obj) => dyn_clone::clone_box(obj.object_name()),
                 None => return Err(ObjectError::NotFound),
             }
         };
@@ -187,7 +185,7 @@ impl ObjectDatabase {
     }
 
     /// Get an object by name
-    pub fn get_object_by_name(&self, name: &str) -> Result<ObjectIdentifier> {
+    pub fn get_object_by_name(&self, name: &dyn ObjectName) -> Result<ObjectIdentifier> {
         let name_index = self.name_index.read().unwrap();
         match name_index.get(name) {
             Some(&identifier) => Ok(identifier),
@@ -244,7 +242,7 @@ impl ObjectDatabase {
     }
 
     /// Check if an object name exists
-    pub fn contains_name(&self, name: &str) -> bool {
+    pub fn contains_name(&self, name: &dyn ObjectName) -> bool {
         let name_index = self.name_index.read().unwrap();
         name_index.contains_key(name)
     }
@@ -340,7 +338,7 @@ pub struct DatabaseStatistics {
 #[cfg(feature = "std")]
 #[derive(Default)]
 pub struct DatabaseBuilder {
-    device: Option<Device>,
+    device: Option<Device<Box<dyn ObjectName>>>,
     objects: Vec<Box<dyn BacnetObject>>,
 }
 
@@ -352,7 +350,7 @@ impl DatabaseBuilder {
     }
 
     /// Set the device object
-    pub fn with_device(mut self, device: Device) -> Self {
+    pub fn with_device(mut self, device: Device<Box<dyn ObjectName>>) -> Self {
         self.device = Some(device);
         self
     }
@@ -386,11 +384,13 @@ mod tests {
     use crate::object::{
         analog::{AnalogInput, AnalogValue},
         binary::BinaryInput,
+        object_name::IntoBoxedObjectName,
     };
 
     #[test]
     fn test_database_creation() {
-        let device = Device::new(1234, "Test Device".to_string());
+        let device: Device<Box<dyn ObjectName>> =
+            Device::new(1234, Box::new("Test Device".to_string()));
         let db = ObjectDatabase::new(device);
 
         assert_eq!(db.object_count(), 1);
@@ -400,7 +400,8 @@ mod tests {
 
     #[test]
     fn test_add_remove_objects() {
-        let device = Device::new(1234, "Test Device".to_string());
+        let device: Device<Box<dyn ObjectName>> =
+            Device::new(1234, Box::new("Test Device".to_string()));
         let db = ObjectDatabase::new(device);
 
         // Add analog input
@@ -426,7 +427,8 @@ mod tests {
 
     #[test]
     fn test_object_lookup() {
-        let device = Device::new(1234, "Test Device".to_string());
+        let device: Device<Box<dyn ObjectName>> =
+            Device::new(1234, Box::new("Test Device".to_string()));
         let db = ObjectDatabase::new(device);
 
         let av = AnalogValue::new(100, "Setpoint".to_string());
@@ -437,7 +439,9 @@ mod tests {
         assert!(db.contains(av_id));
 
         // Lookup by name
-        let found_id = db.get_object_by_name("Setpoint").unwrap();
+        let found_id = db
+            .get_object_by_name("Setpoint".into_object_name().as_ref())
+            .unwrap();
         assert_eq!(found_id, av_id);
 
         // Lookup by type
@@ -448,7 +452,8 @@ mod tests {
 
     #[test]
     fn test_property_search() {
-        let device = Device::new(1234, "Test Device".to_string());
+        let device: Device<Box<dyn ObjectName>> =
+            Device::new(1234, Box::new("Test Device".to_string()));
         let db = ObjectDatabase::new(device);
 
         // Add multiple analog values
@@ -469,7 +474,7 @@ mod tests {
     #[test]
     fn test_database_builder() {
         let db = DatabaseBuilder::new()
-            .with_device(Device::new(5000, "Built Device".to_string()))
+            .with_device(Device::new(5000, Box::new("Built Device".to_string())))
             .add_object(Box::new(AnalogInput::new(1, "AI1".to_string())))
             .add_object(Box::new(AnalogInput::new(2, "AI2".to_string())))
             .add_object(Box::new(BinaryInput::new(1, "BI1".to_string())))
@@ -483,7 +488,9 @@ mod tests {
 
     #[test]
     fn test_next_instance() {
-        let device = Device::new(1234, "Test Device".to_string());
+        let device: Device<Box<dyn ObjectName>> =
+            Device::new(1234, Box::new("Test Device".to_string()));
+
         let db = ObjectDatabase::new(device);
 
         // No analog inputs yet

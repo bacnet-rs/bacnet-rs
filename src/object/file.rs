@@ -5,8 +5,8 @@
 //! and AtomicWriteFile services.
 
 use crate::object::{
-    BacnetObject, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue,
-    Result,
+    object_name::ObjectName, BacnetObject, ObjectError, ObjectIdentifier, ObjectType,
+    PropertyIdentifier, PropertyValue, Result,
 };
 
 #[cfg(not(feature = "std"))]
@@ -22,11 +22,11 @@ pub enum FileAccessMethod {
 
 /// File object implementation
 #[derive(Debug, Clone)]
-pub struct File {
+pub struct File<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// File type (MIME type or file extension)
     pub file_type: String,
     /// File size in octets
@@ -47,9 +47,9 @@ pub struct File {
     pub file_data: Vec<u8>,
 }
 
-impl File {
+impl<O> File<O> {
     /// Create a new File object
-    pub fn new(instance: u32, object_name: String, file_type: String) -> Self {
+    pub fn new(instance: u32, object_name: O, file_type: String) -> Self {
         Self {
             identifier: ObjectIdentifier::new(ObjectType::File, instance),
             object_name,
@@ -184,9 +184,16 @@ impl File {
     }
 }
 
-impl BacnetObject for File {
+impl<O> BacnetObject for File<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -195,7 +202,7 @@ impl BacnetObject for File {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => {
                 Ok(PropertyValue::Enumerated(ObjectType::File as u32))
@@ -209,8 +216,9 @@ impl BacnetObject for File {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }

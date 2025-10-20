@@ -4,20 +4,22 @@
 //! as defined in ASHRAE 135. These objects represent analog (continuous) values in BACnet.
 
 use crate::object::{
-    BacnetObject, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue,
-    Result,
+    object_name::ObjectName, BacnetObject, ObjectError, ObjectIdentifier, ObjectType,
+    PropertyIdentifier, PropertyValue, Result,
 };
 
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
 /// Analog Input object
+///
+/// `O` is the [`ObjectName`](object_name::ObjectName)
 #[derive(Debug, Clone)]
-pub struct AnalogInput {
+pub struct AnalogInput<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// Present value
     pub present_value: f32,
     /// Description
@@ -46,11 +48,11 @@ pub struct AnalogInput {
 
 /// Analog Output object
 #[derive(Debug, Clone)]
-pub struct AnalogOutput {
+pub struct AnalogOutput<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// Present value
     pub present_value: f32,
     /// Description
@@ -83,11 +85,11 @@ pub struct AnalogOutput {
 
 /// Analog Value object
 #[derive(Debug, Clone)]
-pub struct AnalogValue {
+pub struct AnalogValue<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// Present value
     pub present_value: f32,
     /// Description
@@ -163,9 +165,9 @@ pub enum EngineeringUnits {
     LitersPerSecond = 126,
 }
 
-impl AnalogInput {
+impl<O> AnalogInput<O> {
     /// Create a new Analog Input object
-    pub fn new(instance: u32, object_name: String) -> Self {
+    pub fn new(instance: u32, object_name: O) -> Self {
         Self {
             identifier: ObjectIdentifier::new(ObjectType::AnalogInput, instance),
             object_name,
@@ -223,9 +225,9 @@ impl AnalogInput {
     }
 }
 
-impl AnalogOutput {
+impl<O> AnalogOutput<O> {
     /// Create a new Analog Output object
-    pub fn new(instance: u32, object_name: String) -> Self {
+    pub fn new(instance: u32, object_name: O) -> Self {
         Self {
             identifier: ObjectIdentifier::new(ObjectType::AnalogOutput, instance),
             object_name,
@@ -280,9 +282,9 @@ impl AnalogOutput {
     }
 }
 
-impl AnalogValue {
+impl<O> AnalogValue<O> {
     /// Create a new Analog Value object
-    pub fn new(instance: u32, object_name: String) -> Self {
+    pub fn new(instance: u32, object_name: O) -> Self {
         Self {
             identifier: ObjectIdentifier::new(ObjectType::AnalogValue, instance),
             object_name,
@@ -323,9 +325,16 @@ impl AnalogValue {
     }
 }
 
-impl BacnetObject for AnalogInput {
+impl<O> BacnetObject for AnalogInput<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -334,7 +343,7 @@ impl BacnetObject for AnalogInput {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => {
                 Ok(PropertyValue::Enumerated(ObjectType::AnalogInput as u32))
@@ -349,8 +358,9 @@ impl BacnetObject for AnalogInput {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }
@@ -385,9 +395,16 @@ impl BacnetObject for AnalogInput {
     }
 }
 
-impl BacnetObject for AnalogOutput {
+impl<O> BacnetObject for AnalogOutput<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -396,7 +413,7 @@ impl BacnetObject for AnalogOutput {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => {
                 Ok(PropertyValue::Enumerated(ObjectType::AnalogOutput as u32))
@@ -422,8 +439,9 @@ impl BacnetObject for AnalogOutput {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }
@@ -469,9 +487,15 @@ impl BacnetObject for AnalogOutput {
     }
 }
 
-impl BacnetObject for AnalogValue {
+impl<O> BacnetObject for AnalogValue<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -480,7 +504,7 @@ impl BacnetObject for AnalogValue {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => {
                 Ok(PropertyValue::Enumerated(ObjectType::AnalogValue as u32))
@@ -506,8 +530,9 @@ impl BacnetObject for AnalogValue {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }

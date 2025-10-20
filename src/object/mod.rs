@@ -84,10 +84,10 @@
 //! ## Object Database Usage
 //!
 //! ```rust,no_run
-//! use bacnet_rs::object::{database::ObjectDatabase, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, analog::AnalogInput, Device};
+//! use bacnet_rs::object::{database::ObjectDatabase, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, analog::AnalogInput, Device, object_name::IntoBoxedObjectName};
 //!
 //! // Create a device and object database
-//! let device = Device::new(12345, "BACnet Device".to_string());
+//! let device = Device::new(12345, "BACnet Device".into_object_name());
 //! let mut db = ObjectDatabase::new(device);
 //!
 //! // Create an analog input object
@@ -160,6 +160,8 @@ pub enum ObjectError {
     /// Invalid object configuration
     InvalidConfiguration(String),
 }
+
+pub mod object_name;
 
 impl fmt::Display for ObjectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -356,6 +358,9 @@ pub trait BacnetObject: Send + Sync {
     /// Get the object identifier
     fn identifier(&self) -> ObjectIdentifier;
 
+    /// Get the Object_Name parameter
+    fn object_name(&self) -> &dyn ObjectName;
+
     /// Get a property value
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue>;
 
@@ -409,11 +414,11 @@ pub struct Time {
 
 /// Device object implementation
 #[derive(Debug, Clone)]
-pub struct Device {
+pub struct Device<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name (required property)
-    pub object_name: String,
+    pub object_name: O,
     /// Object type (always Device)
     pub object_type: ObjectType,
     /// System status
@@ -446,9 +451,9 @@ pub struct Device {
     pub database_revision: u32,
 }
 
-impl Device {
+impl<O> Device<O> {
     /// Create a new Device object
-    pub fn new(instance: u32, object_name: String) -> Self {
+    pub fn new(instance: u32, object_name: O) -> Self {
         Self {
             identifier: ObjectIdentifier::new(ObjectType::Device, instance),
             object_name,
@@ -520,9 +525,16 @@ impl Device {
     }
 }
 
-impl BacnetObject for Device {
+impl<O> BacnetObject for Device<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -531,7 +543,7 @@ impl BacnetObject for Device {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => {
                 Ok(PropertyValue::Enumerated(self.object_type as u32))
@@ -577,8 +589,9 @@ impl BacnetObject for Device {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }
@@ -744,6 +757,8 @@ pub use multistate::{MultiStateInput, MultiStateOutput, MultiStateValue};
 
 #[cfg(feature = "std")]
 pub use database::{DatabaseBuilder, DatabaseStatistics, ObjectDatabase};
+
+use crate::object::object_name::ObjectName;
 
 #[cfg(test)]
 mod tests {

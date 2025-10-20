@@ -3,6 +3,7 @@
 //! This example demonstrates the comprehensive object database functionality
 //! including object management, property access, and search capabilities.
 
+use bacnet_rs::object::object_name::{IntoBoxedObjectName, ObjectName};
 use bacnet_rs::object::{
     AnalogInput, AnalogValue, BinaryInput, BinaryOutput, BinaryPV, DatabaseBuilder, Device,
     EngineeringUnits, MultiStateValue, ObjectDatabase, ObjectIdentifier, ObjectType,
@@ -49,7 +50,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Create a sample database with various object types
 fn create_sample_database() -> Result<ObjectDatabase, Box<dyn std::error::Error>> {
-    let mut device = Device::new(5000, "Demo Controller".to_string());
+    let mut device: Device<Box<dyn ObjectName>> =
+        Device::new(1234, Box::new("Demo Controller".to_string()));
+
     device.vendor_name = "BACnet-RS Demo".to_string();
     device.model_name = "Virtual Device v1.0".to_string();
 
@@ -226,7 +229,7 @@ fn demo_search_capabilities(db: &ObjectDatabase) -> Result<(), Box<dyn std::erro
 
     // Search by name
     println!("Searching for 'Zone 1 Temperature':");
-    match db.get_object_by_name("Zone 1 Temperature") {
+    match db.get_object_by_name("Zone 1 Temperature".into_object_name().as_ref()) {
         Ok(obj_id) => {
             println!(
                 "  Found: {} {}",
@@ -258,7 +261,10 @@ fn demo_search_capabilities(db: &ObjectDatabase) -> Result<(), Box<dyn std::erro
     println!("\nExistence checks:");
     let test_id = ObjectIdentifier::new(ObjectType::AnalogInput, 99);
     println!("  AI:99 exists: {}", db.contains(test_id));
-    println!("  'Fire Alarm' exists: {}", db.contains_name("Fire Alarm"));
+    println!(
+        "  'Fire Alarm' exists: {}",
+        db.contains_name("Fire Alarm".into_object_name().as_ref())
+    );
 
     Ok(())
 }

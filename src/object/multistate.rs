@@ -4,8 +4,8 @@
 //! object types as defined in ASHRAE 135. These objects represent multi-position values.
 
 use crate::object::{
-    BacnetObject, EventState, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier,
-    PropertyValue, Reliability, Result,
+    object_name::ObjectName, BacnetObject, EventState, ObjectError, ObjectIdentifier, ObjectType,
+    PropertyIdentifier, PropertyValue, Reliability, Result,
 };
 
 #[cfg(not(feature = "std"))]
@@ -13,11 +13,11 @@ use alloc::{string::String, vec::Vec};
 
 /// Multi-state Input object
 #[derive(Debug, Clone)]
-pub struct MultiStateInput {
+pub struct MultiStateInput<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// Present value (state 1..N)
     pub present_value: u32,
     /// Description
@@ -40,11 +40,11 @@ pub struct MultiStateInput {
 
 /// Multi-state Output object
 #[derive(Debug, Clone)]
-pub struct MultiStateOutput {
+pub struct MultiStateOutput<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// Present value (state 1..N)
     pub present_value: u32,
     /// Description
@@ -71,11 +71,11 @@ pub struct MultiStateOutput {
 
 /// Multi-state Value object
 #[derive(Debug, Clone)]
-pub struct MultiStateValue {
+pub struct MultiStateValue<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// Present value (state 1..N)
     pub present_value: u32,
     /// Description
@@ -98,9 +98,9 @@ pub struct MultiStateValue {
     pub relinquish_default: u32,
 }
 
-impl MultiStateInput {
+impl<O> MultiStateInput<O> {
     /// Create a new Multi-state Input object
-    pub fn new(instance: u32, object_name: String, number_of_states: u32) -> Self {
+    pub fn new(instance: u32, object_name: O, number_of_states: u32) -> Self {
         let mut state_text = Vec::with_capacity(number_of_states as usize);
         for i in 1..=number_of_states {
             state_text.push(format!("State {}", i));
@@ -155,9 +155,9 @@ impl MultiStateInput {
     }
 }
 
-impl MultiStateOutput {
+impl<O> MultiStateOutput<O> {
     /// Create a new Multi-state Output object
-    pub fn new(instance: u32, object_name: String, number_of_states: u32) -> Self {
+    pub fn new(instance: u32, object_name: O, number_of_states: u32) -> Self {
         let mut state_text = Vec::with_capacity(number_of_states as usize);
         for i in 1..=number_of_states {
             state_text.push(format!("State {}", i));
@@ -224,9 +224,9 @@ impl MultiStateOutput {
     }
 }
 
-impl MultiStateValue {
+impl<O> MultiStateValue<O> {
     /// Create a new Multi-state Value object
-    pub fn new(instance: u32, object_name: String, number_of_states: u32) -> Self {
+    pub fn new(instance: u32, object_name: O, number_of_states: u32) -> Self {
         let mut state_text = Vec::with_capacity(number_of_states as usize);
         for i in 1..=number_of_states {
             state_text.push(format!("State {}", i));
@@ -282,9 +282,16 @@ impl MultiStateValue {
     }
 }
 
-impl BacnetObject for MultiStateInput {
+impl<O> BacnetObject for MultiStateInput<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -293,7 +300,7 @@ impl BacnetObject for MultiStateInput {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(
                 ObjectType::MultiStateInput as u32,
@@ -310,8 +317,9 @@ impl BacnetObject for MultiStateInput {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }
@@ -346,9 +354,16 @@ impl BacnetObject for MultiStateInput {
     }
 }
 
-impl BacnetObject for MultiStateOutput {
+impl<O> BacnetObject for MultiStateOutput<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -357,7 +372,7 @@ impl BacnetObject for MultiStateOutput {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(
                 ObjectType::MultiStateOutput as u32,
@@ -385,8 +400,9 @@ impl BacnetObject for MultiStateOutput {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }
@@ -432,9 +448,16 @@ impl BacnetObject for MultiStateOutput {
     }
 }
 
-impl BacnetObject for MultiStateValue {
+impl<O> BacnetObject for MultiStateValue<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -443,7 +466,7 @@ impl BacnetObject for MultiStateValue {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(
                 ObjectType::MultiStateValue as u32,
@@ -471,8 +494,9 @@ impl BacnetObject for MultiStateValue {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }
