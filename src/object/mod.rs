@@ -84,7 +84,7 @@
 //! ## Object Database Usage
 //!
 //! ```rust,no_run
-//! use bacnet_rs::object::{database::ObjectDatabase, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, analog::AnalogInput, Device, object_name::IntoBoxedObjectName};
+//! use bacnet_rs::object::{database::ObjectDatabase, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, analog::AnalogInput, Device, object_name::IntoBoxedObjectName, BacnetObject};
 //!
 //! // Create a device and object database
 //! let device = Device::new(12345, "BACnet Device".into_object_name());
@@ -93,7 +93,7 @@
 //! // Create an analog input object
 //! let mut ai = AnalogInput::new(1, "Room Temperature".to_string());
 //! ai.set_present_value(23.5);
-//! let obj_id = ai.identifier;
+//! let obj_id = ai.identifier();
 //!
 //! // Add the object to the database
 //! db.add_object(Box::new(ai)).expect("Failed to add object");
