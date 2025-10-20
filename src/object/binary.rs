@@ -4,8 +4,8 @@
 //! as defined in ASHRAE 135. These objects represent binary (two-state) values in BACnet.
 
 use crate::object::{
-    BacnetObject, EventState, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier,
-    PropertyValue, Reliability, Result,
+    object_name::ObjectName, BacnetObject, EventState, ObjectError, ObjectIdentifier, ObjectType,
+    PropertyIdentifier, PropertyValue, Reliability, Result,
 };
 
 #[cfg(not(feature = "std"))]
@@ -45,11 +45,11 @@ pub enum Polarity {
 
 /// Binary Input object
 #[derive(Debug, Clone)]
-pub struct BinaryInput {
+pub struct BinaryInput<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// Present value
     pub present_value: BinaryPV,
     /// Description
@@ -80,11 +80,11 @@ pub struct BinaryInput {
 
 /// Binary Output object
 #[derive(Debug, Clone)]
-pub struct BinaryOutput {
+pub struct BinaryOutput<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// Present value
     pub present_value: BinaryPV,
     /// Description
@@ -117,11 +117,11 @@ pub struct BinaryOutput {
 
 /// Binary Value object
 #[derive(Debug, Clone)]
-pub struct BinaryValue {
+pub struct BinaryValue<O> {
     /// Object identifier
     pub identifier: ObjectIdentifier,
     /// Object name
-    pub object_name: String,
+    pub object_name: O,
     /// Present value
     pub present_value: BinaryPV,
     /// Description
@@ -144,9 +144,9 @@ pub struct BinaryValue {
     pub relinquish_default: BinaryPV,
 }
 
-impl BinaryInput {
+impl<O> BinaryInput<O> {
     /// Create a new Binary Input object
-    pub fn new(instance: u32, object_name: String) -> Self {
+    pub fn new(instance: u32, object_name: O) -> Self {
         Self {
             identifier: ObjectIdentifier::new(ObjectType::BinaryInput, instance),
             object_name,
@@ -209,9 +209,9 @@ impl BinaryInput {
     }
 }
 
-impl BinaryOutput {
+impl<O> BinaryOutput<O> {
     /// Create a new Binary Output object
-    pub fn new(instance: u32, object_name: String) -> Self {
+    pub fn new(instance: u32, object_name: O) -> Self {
         Self {
             identifier: ObjectIdentifier::new(ObjectType::BinaryOutput, instance),
             object_name,
@@ -266,9 +266,9 @@ impl BinaryOutput {
     }
 }
 
-impl BinaryValue {
+impl<O> BinaryValue<O> {
     /// Create a new Binary Value object
-    pub fn new(instance: u32, object_name: String) -> Self {
+    pub fn new(instance: u32, object_name: O) -> Self {
         Self {
             identifier: ObjectIdentifier::new(ObjectType::BinaryValue, instance),
             object_name,
@@ -309,9 +309,16 @@ impl BinaryValue {
     }
 }
 
-impl BacnetObject for BinaryInput {
+impl<O> BacnetObject for BinaryInput<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -320,7 +327,7 @@ impl BacnetObject for BinaryInput {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => {
                 Ok(PropertyValue::Enumerated(ObjectType::BinaryInput as u32))
@@ -337,8 +344,9 @@ impl BacnetObject for BinaryInput {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }
@@ -373,9 +381,16 @@ impl BacnetObject for BinaryInput {
     }
 }
 
-impl BacnetObject for BinaryOutput {
+impl<O> BacnetObject for BinaryOutput<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -384,7 +399,7 @@ impl BacnetObject for BinaryOutput {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => {
                 Ok(PropertyValue::Enumerated(ObjectType::BinaryOutput as u32))
@@ -412,8 +427,9 @@ impl BacnetObject for BinaryOutput {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }
@@ -468,9 +484,16 @@ impl BacnetObject for BinaryOutput {
     }
 }
 
-impl BacnetObject for BinaryValue {
+impl<O> BacnetObject for BinaryValue<O>
+where
+    O: ObjectName,
+{
     fn identifier(&self) -> ObjectIdentifier {
         self.identifier
+    }
+
+    fn object_name(&self) -> &dyn ObjectName {
+        &self.object_name
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
@@ -479,7 +502,7 @@ impl BacnetObject for BinaryValue {
                 Ok(PropertyValue::ObjectIdentifier(self.identifier))
             }
             PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
+                Ok(PropertyValue::CharacterString(self.object_name.to_string()))
             }
             PropertyIdentifier::ObjectType => {
                 Ok(PropertyValue::Enumerated(ObjectType::BinaryValue as u32))
@@ -507,8 +530,9 @@ impl BacnetObject for BinaryValue {
         match property {
             PropertyIdentifier::ObjectName => {
                 if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
+                    self.object_name
+                        .update(&name)
+                        .map_err(|_| ObjectError::InvalidValue(name))
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }

@@ -165,8 +165,8 @@ fn process_whois(data: &[u8]) -> Option<WhoIsRequest> {
 }
 
 /// Create an I-Am response message
-fn create_iam_response(
-    device: &Device,
+fn create_iam_response<O>(
+    device: &Device<O>,
     _destination: SocketAddr,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Create I-Am request
