@@ -353,10 +353,24 @@ impl ObjectIdentifier {
     }
 }
 
+/// Helper trait to get the [`ObjectIdentifier`] which is based on the [`ObjectType`] and the instance number
+pub trait GetObjectIdentifier {
+    fn object_type(&self) -> ObjectType;
+    fn instance(&self) -> u32;
+    fn construct_identifier(&self) -> ObjectIdentifier {
+        ObjectIdentifier {
+            object_type: self.object_type(),
+            instance: self.instance(),
+        }
+    }
+}
+
 /// Trait for all BACnet objects
-pub trait BacnetObject: Send + Sync {
+pub trait BacnetObject: Send + Sync + GetObjectIdentifier {
     /// Get the object identifier
-    fn identifier(&self) -> ObjectIdentifier;
+    fn identifier(&self) -> ObjectIdentifier {
+        self.construct_identifier()
+    }
 
     /// Get the Object_Name parameter
     fn object_name(&self) -> &dyn ObjectName;
@@ -415,8 +429,8 @@ pub struct Time {
 /// Device object implementation
 #[derive(Debug, Clone)]
 pub struct Device<O> {
-    /// Object identifier
-    pub identifier: ObjectIdentifier,
+    /// Object instance number
+    pub instance: u32,
     /// Object name (required property)
     pub object_name: O,
     /// Object type (always Device)
@@ -455,7 +469,7 @@ impl<O> Device<O> {
     /// Create a new Device object
     pub fn new(instance: u32, object_name: O) -> Self {
         Self {
-            identifier: ObjectIdentifier::new(ObjectType::Device, instance),
+            instance,
             object_name,
             object_type: ObjectType::Device,
             system_status: DeviceStatus::Operational,
@@ -525,14 +539,19 @@ impl<O> Device<O> {
     }
 }
 
+impl<O> GetObjectIdentifier for Device<O> {
+    fn instance(&self) -> u32 {
+        self.instance
+    }
+    fn object_type(&self) -> ObjectType {
+        ObjectType::Device
+    }
+}
+
 impl<O> BacnetObject for Device<O>
 where
     O: ObjectName,
 {
-    fn identifier(&self) -> ObjectIdentifier {
-        self.identifier
-    }
-
     fn object_name(&self) -> &dyn ObjectName {
         &self.object_name
     }
@@ -540,7 +559,7 @@ where
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
             PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
+                Ok(PropertyValue::ObjectIdentifier(self.identifier()))
             }
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.to_string()))
@@ -767,7 +786,7 @@ mod tests {
     #[test]
     fn test_device_creation() {
         let device = Device::new(123, "Test Device".to_string());
-        assert_eq!(device.identifier.instance, 123);
+        assert_eq!(device.identifier().instance, 123);
         assert_eq!(device.object_name, "Test Device");
         assert_eq!(device.object_type, ObjectType::Device);
     }

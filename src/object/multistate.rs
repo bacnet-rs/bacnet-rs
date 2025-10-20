@@ -4,8 +4,8 @@
 //! object types as defined in ASHRAE 135. These objects represent multi-position values.
 
 use crate::object::{
-    object_name::ObjectName, BacnetObject, EventState, ObjectError, ObjectIdentifier, ObjectType,
-    PropertyIdentifier, PropertyValue, Reliability, Result,
+    object_name::ObjectName, BacnetObject, EventState, GetObjectIdentifier, ObjectError,
+    ObjectType, PropertyIdentifier, PropertyValue, Reliability, Result,
 };
 
 #[cfg(not(feature = "std"))]
@@ -14,8 +14,8 @@ use alloc::{string::String, vec::Vec};
 /// Multi-state Input object
 #[derive(Debug, Clone)]
 pub struct MultiStateInput<O> {
-    /// Object identifier
-    pub identifier: ObjectIdentifier,
+    /// Object instance number
+    pub instance: u32,
     /// Object name
     pub object_name: O,
     /// Present value (state 1..N)
@@ -41,8 +41,8 @@ pub struct MultiStateInput<O> {
 /// Multi-state Output object
 #[derive(Debug, Clone)]
 pub struct MultiStateOutput<O> {
-    /// Object identifier
-    pub identifier: ObjectIdentifier,
+    /// Object instance number
+    pub instance: u32,
     /// Object name
     pub object_name: O,
     /// Present value (state 1..N)
@@ -72,8 +72,8 @@ pub struct MultiStateOutput<O> {
 /// Multi-state Value object
 #[derive(Debug, Clone)]
 pub struct MultiStateValue<O> {
-    /// Object identifier
-    pub identifier: ObjectIdentifier,
+    /// Object instance number
+    pub instance: u32,
     /// Object name
     pub object_name: O,
     /// Present value (state 1..N)
@@ -107,7 +107,7 @@ impl<O> MultiStateInput<O> {
         }
 
         Self {
-            identifier: ObjectIdentifier::new(ObjectType::MultiStateInput, instance),
+            instance,
             object_name,
             present_value: 1,
             description: String::new(),
@@ -164,7 +164,7 @@ impl<O> MultiStateOutput<O> {
         }
 
         Self {
-            identifier: ObjectIdentifier::new(ObjectType::MultiStateOutput, instance),
+            instance,
             object_name,
             present_value: 1,
             description: String::new(),
@@ -233,7 +233,7 @@ impl<O> MultiStateValue<O> {
         }
 
         Self {
-            identifier: ObjectIdentifier::new(ObjectType::MultiStateValue, instance),
+            instance,
             object_name,
             present_value: 1,
             description: String::new(),
@@ -282,14 +282,19 @@ impl<O> MultiStateValue<O> {
     }
 }
 
+impl<O> GetObjectIdentifier for MultiStateInput<O> {
+    fn instance(&self) -> u32 {
+        self.instance
+    }
+    fn object_type(&self) -> ObjectType {
+        ObjectType::MultiStateInput
+    }
+}
+
 impl<O> BacnetObject for MultiStateInput<O>
 where
     O: ObjectName,
 {
-    fn identifier(&self) -> ObjectIdentifier {
-        self.identifier
-    }
-
     fn object_name(&self) -> &dyn ObjectName {
         &self.object_name
     }
@@ -297,7 +302,7 @@ where
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
             PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
+                Ok(PropertyValue::ObjectIdentifier(self.identifier()))
             }
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.to_string()))
@@ -354,14 +359,19 @@ where
     }
 }
 
+impl<O> GetObjectIdentifier for MultiStateOutput<O> {
+    fn instance(&self) -> u32 {
+        self.instance
+    }
+    fn object_type(&self) -> ObjectType {
+        ObjectType::MultiStateOutput
+    }
+}
+
 impl<O> BacnetObject for MultiStateOutput<O>
 where
     O: ObjectName,
 {
-    fn identifier(&self) -> ObjectIdentifier {
-        self.identifier
-    }
-
     fn object_name(&self) -> &dyn ObjectName {
         &self.object_name
     }
@@ -369,7 +379,7 @@ where
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
             PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
+                Ok(PropertyValue::ObjectIdentifier(self.identifier()))
             }
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.to_string()))
@@ -448,14 +458,19 @@ where
     }
 }
 
+impl<O> GetObjectIdentifier for MultiStateValue<O> {
+    fn instance(&self) -> u32 {
+        self.instance
+    }
+    fn object_type(&self) -> ObjectType {
+        ObjectType::MultiStateValue
+    }
+}
+
 impl<O> BacnetObject for MultiStateValue<O>
 where
     O: ObjectName,
 {
-    fn identifier(&self) -> ObjectIdentifier {
-        self.identifier
-    }
-
     fn object_name(&self) -> &dyn ObjectName {
         &self.object_name
     }
@@ -463,7 +478,7 @@ where
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
             PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
+                Ok(PropertyValue::ObjectIdentifier(self.identifier()))
             }
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.to_string()))
@@ -549,7 +564,7 @@ mod tests {
     #[test]
     fn test_multistate_input_creation() {
         let msi = MultiStateInput::new(1, "Mode Selector".to_string(), 5);
-        assert_eq!(msi.identifier.instance, 1);
+        assert_eq!(msi.identifier().instance, 1);
         assert_eq!(msi.object_name, "Mode Selector");
         assert_eq!(msi.number_of_states, 5);
         assert_eq!(msi.present_value, 1);
