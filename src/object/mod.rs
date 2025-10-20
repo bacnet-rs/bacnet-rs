@@ -129,6 +129,8 @@ use core::fmt;
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
+pub mod state_text;
+
 /// Result type for object operations
 #[cfg(feature = "std")]
 pub type Result<T> = std::result::Result<T, ObjectError>;
