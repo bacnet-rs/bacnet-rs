@@ -117,6 +117,8 @@
 //! - Proper object identifier encoding/decoding
 //! - Thread-safe object database implementation
 
+use downcast_rs::{impl_downcast, DowncastSync};
+
 #[cfg(feature = "std")]
 use std::error::Error;
 
@@ -366,7 +368,7 @@ pub trait GetObjectIdentifier {
 }
 
 /// Trait for all BACnet objects
-pub trait BacnetObject: Send + Sync + GetObjectIdentifier {
+pub trait BacnetObject: Send + Sync + GetObjectIdentifier + DowncastSync {
     /// Get the object identifier
     fn identifier(&self) -> ObjectIdentifier {
         self.construct_identifier()
@@ -387,6 +389,8 @@ pub trait BacnetObject: Send + Sync + GetObjectIdentifier {
     /// Get list of all properties
     fn property_list(&self) -> Vec<PropertyIdentifier>;
 }
+
+impl_downcast!(sync BacnetObject);
 
 /// Property values can be of various types
 #[derive(Debug, Clone)]
