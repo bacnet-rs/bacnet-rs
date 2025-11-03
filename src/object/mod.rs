@@ -359,8 +359,44 @@ pub trait BacnetObject: Send + Sync {
     /// Get a property value
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue>;
 
-    /// Set a property value
+    /// Set a property value (local update, does not trigger callbacks)
     fn set_property(&mut self, property: PropertyIdentifier, value: PropertyValue) -> Result<()>;
+
+    /// Set a property value from a remote source (triggers callbacks)
+    ///
+    /// This method is called when a property is updated due to a network packet
+    /// (e.g., WriteProperty service). The default implementation calls `set_property()`
+    /// and then `trigger_callback()`.
+    ///
+    /// Override this method if you need custom behavior for remote updates.
+    fn set_property_remote(
+        &mut self,
+        property: PropertyIdentifier,
+        value: PropertyValue,
+    ) -> Result<()> {
+        self.set_property(property, value.clone())?;
+        self.trigger_callback(property, &value);
+        Ok(())
+    }
+
+    /// Trigger a callback for a property change
+    ///
+    /// This is called internally when a remote update occurs. The default implementation
+    /// does nothing, so objects without callback support remain unchanged.
+    ///
+    /// Objects that support callbacks should override this method to invoke their
+    /// registered callbacks.
+    fn trigger_callback(&mut self, _property: PropertyIdentifier, _value: &PropertyValue) {
+        // Default: no-op for backward compatibility
+    }
+
+    /// Check if a callback is registered for a property
+    ///
+    /// The default implementation returns `false`. Objects with callback support
+    /// should override this to check their callback registry.
+    fn has_callback(&self, _property: PropertyIdentifier) -> bool {
+        false
+    }
 
     /// Check if property is writable
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool;
@@ -724,6 +760,8 @@ pub struct AddressBinding {
 pub mod analog;
 /// Binary object types (BI, BO, BV)
 pub mod binary;
+/// Callback infrastructure for property change notifications
+pub mod callback;
 /// Object database for managing BACnet objects
 #[cfg(feature = "std")]
 pub mod database;

@@ -4,12 +4,12 @@
 //! as defined in ASHRAE 135. These objects represent analog (continuous) values in BACnet.
 
 use crate::object::{
-    BacnetObject, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue,
-    Result,
+    callback::ObjectCallbacks, BacnetObject, ObjectError, ObjectIdentifier, ObjectType,
+    PropertyIdentifier, PropertyValue, Result,
 };
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 
 /// Analog Input object
 #[derive(Debug, Clone)]
@@ -42,6 +42,8 @@ pub struct AnalogInput {
     pub resolution: Option<f32>,
     /// COV increment
     pub cov_increment: Option<f32>,
+    /// Callbacks for property change notifications (remote updates only)
+    callbacks: ObjectCallbacks,
 }
 
 /// Analog Output object
@@ -181,6 +183,7 @@ impl AnalogInput {
             max_pres_value: None,
             resolution: None,
             cov_increment: None,
+            callbacks: ObjectCallbacks::default(),
         }
     }
 
@@ -220,6 +223,60 @@ impl AnalogInput {
         if out_of_service {
             self.status_flags |= 0x01;
         }
+    }
+
+    /// Register a callback for PresentValue changes from remote updates
+    ///
+    /// The callback will be invoked when the present value changes due to a
+    /// remote update (WriteProperty from network). It will NOT be called for
+    /// local updates via `set_present_value()` or `set_property()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bacnet_rs::object::analog::AnalogInput;
+    ///
+    /// let mut ai = AnalogInput::new(1, "Temperature".to_string());
+    /// ai.on_present_value_change(|value| {
+    ///     println!("Temperature changed to: {}", value);
+    /// });
+    /// ```
+    pub fn on_present_value_change<F>(&mut self, mut callback: F)
+    where
+        F: FnMut(f32) + Send + Sync + 'static,
+    {
+        self.callbacks.on_present_value(Box::new(move |value| {
+            if let PropertyValue::Real(val) = value {
+                callback(val);
+            }
+        }));
+    }
+
+    /// Register a callback for OutOfService changes from remote updates
+    pub fn on_out_of_service_change<F>(&mut self, mut callback: F)
+    where
+        F: FnMut(bool) + Send + Sync + 'static,
+    {
+        self.callbacks.on_out_of_service(Box::new(move |value| {
+            if let PropertyValue::Boolean(val) = value {
+                callback(val);
+            }
+        }));
+    }
+
+    /// Clear the PresentValue callback
+    pub fn clear_present_value_callback(&mut self) {
+        self.callbacks.clear_present_value();
+    }
+
+    /// Clear the OutOfService callback
+    pub fn clear_out_of_service_callback(&mut self) {
+        self.callbacks.clear_out_of_service();
+    }
+
+    /// Clear all callbacks
+    pub fn clear_all_callbacks(&mut self) {
+        self.callbacks.clear_all();
     }
 }
 
@@ -355,6 +412,14 @@ impl BacnetObject for AnalogInput {
                     Err(ObjectError::InvalidPropertyType)
                 }
             }
+            PropertyIdentifier::PresentValue => {
+                if let PropertyValue::Real(val) = value {
+                    self.present_value = val;
+                    Ok(())
+                } else {
+                    Err(ObjectError::InvalidPropertyType)
+                }
+            }
             PropertyIdentifier::OutOfService => {
                 if let PropertyValue::Boolean(oos) = value {
                     self.out_of_service = oos;
@@ -370,7 +435,9 @@ impl BacnetObject for AnalogInput {
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
         matches!(
             property,
-            PropertyIdentifier::ObjectName | PropertyIdentifier::OutOfService
+            PropertyIdentifier::ObjectName
+                | PropertyIdentifier::PresentValue
+                | PropertyIdentifier::OutOfService
         )
     }
 
@@ -382,6 +449,14 @@ impl BacnetObject for AnalogInput {
             PropertyIdentifier::PresentValue,
             PropertyIdentifier::OutOfService,
         ]
+    }
+
+    fn trigger_callback(&mut self, property: PropertyIdentifier, value: &PropertyValue) {
+        self.callbacks.trigger(property, value.clone());
+    }
+
+    fn has_callback(&self, property: PropertyIdentifier) -> bool {
+        self.callbacks.has_callback(property)
     }
 }
 
