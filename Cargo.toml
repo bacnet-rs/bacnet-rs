@@ -77,6 +77,12 @@ name = "responder_device"
 path = "examples/basic/responder_device.rs"
 required-features = ["std"]
 
+# Callback examples
+[[example]]
+name = "basic_callback"
+path = "examples/callbacks/basic_callback.rs"
+required-features = ["std"]
+
 # Networking examples
 [[example]]
 name = "whois_scan"
