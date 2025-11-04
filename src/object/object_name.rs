@@ -24,6 +24,7 @@ eq_trait_object!(ObjectName);
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to parse Object_Name: {0}")]
+#[non_exhaustive]
 pub enum ObjectNameParseError {
     Other(#[source] Box<dyn core::error::Error>),
 }
