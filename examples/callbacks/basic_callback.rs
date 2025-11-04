@@ -18,7 +18,7 @@ fn main() {
 
     // Register a callback for PresentValue changes
     temperature_sensor.on_present_value_change(|value| {
-        println!("🔔 Callback triggered! New temperature: {:.1}°C", value);
+        println!("Callback triggered! New temperature: {:.1}°C", value);
     });
 
     println!("Registered callback for PresentValue changes\n");
@@ -57,7 +57,7 @@ fn main() {
     println!("4. Registering OutOfService callback:");
     temperature_sensor.on_out_of_service_change(|out_of_service| {
         println!(
-            "🔔 Out of service status changed to: {}",
+            "Out of service status changed to: {}",
             if out_of_service { "TRUE" } else { "FALSE" }
         );
     });
