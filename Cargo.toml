@@ -48,7 +48,7 @@ async-trait = { version = "0.1", optional = true }
 
 downcast-rs = { version = "2", default-features = false, features = ["sync"] }
 dyn-clone = { version = "1" }
-dyn-hash = { version = "0.2" }
+dyn-hash = { version = "1" }
 dyn-eq = { version = "0.1" }
 
 [dev-dependencies]
@@ -69,6 +69,7 @@ std = [
     "chrono/std",
     "hex/std",
     "downcast-rs/std",
+
 ]
 async = ["tokio", "async-trait", "std"]
 no-std = []
