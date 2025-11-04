@@ -262,8 +262,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Rust toolchain (1.75.0)
-        uses: dtolnay/rust-toolchain@1.75.0
+      - name: Setup Rust toolchain (1.83.0)
+        uses: dtolnay/rust-toolchain@1.83.0
 
       - name: Check MSRV
         run: cargo check --all-features
