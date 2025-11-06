@@ -181,89 +181,6 @@ impl fmt::Display for ObjectError {
 #[cfg(feature = "std")]
 impl Error for ObjectError {}
 
-/// BACnet object types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u16)]
-pub enum ObjectType {
-    AnalogInput = 0,
-    AnalogOutput = 1,
-    AnalogValue = 2,
-    BinaryInput = 3,
-    BinaryOutput = 4,
-    BinaryValue = 5,
-    Calendar = 6,
-    Command = 7,
-    Device = 8,
-    EventEnrollment = 9,
-    File = 10,
-    Group = 11,
-    Loop = 12,
-    MultiStateInput = 13,
-    MultiStateOutput = 14,
-    MultiStateValue = 19,
-    NotificationClass = 15,
-    Program = 16,
-    Schedule = 17,
-    Averaging = 18,
-    TrendLog = 20,
-    LifeSafetyPoint = 21,
-    LifeSafetyZone = 22,
-    Accumulator = 23,
-    PulseConverter = 24,
-    EventLog = 25,
-    GlobalGroup = 26,
-    TrendLogMultiple = 27,
-    LoadControl = 28,
-    StructuredView = 29,
-    AccessDoor = 30,
-    // ... many more standard types
-    // Vendor specific range starts at 128
-}
-
-impl TryFrom<u16> for ObjectType {
-    type Error = ObjectError;
-
-    fn try_from(value: u16) -> Result<Self> {
-        match value {
-            0 => Ok(ObjectType::AnalogInput),
-            1 => Ok(ObjectType::AnalogOutput),
-            2 => Ok(ObjectType::AnalogValue),
-            3 => Ok(ObjectType::BinaryInput),
-            4 => Ok(ObjectType::BinaryOutput),
-            5 => Ok(ObjectType::BinaryValue),
-            6 => Ok(ObjectType::Calendar),
-            7 => Ok(ObjectType::Command),
-            8 => Ok(ObjectType::Device),
-            9 => Ok(ObjectType::EventEnrollment),
-            10 => Ok(ObjectType::File),
-            11 => Ok(ObjectType::Group),
-            12 => Ok(ObjectType::Loop),
-            13 => Ok(ObjectType::MultiStateInput),
-            14 => Ok(ObjectType::MultiStateOutput),
-            15 => Ok(ObjectType::NotificationClass),
-            16 => Ok(ObjectType::Program),
-            17 => Ok(ObjectType::Schedule),
-            18 => Ok(ObjectType::Averaging),
-            19 => Ok(ObjectType::MultiStateValue),
-            20 => Ok(ObjectType::TrendLog),
-            21 => Ok(ObjectType::LifeSafetyPoint),
-            22 => Ok(ObjectType::LifeSafetyZone),
-            23 => Ok(ObjectType::Accumulator),
-            24 => Ok(ObjectType::PulseConverter),
-            25 => Ok(ObjectType::EventLog),
-            26 => Ok(ObjectType::GlobalGroup),
-            27 => Ok(ObjectType::TrendLogMultiple),
-            28 => Ok(ObjectType::LoadControl),
-            29 => Ok(ObjectType::StructuredView),
-            30 => Ok(ObjectType::AccessDoor),
-            _ => Err(ObjectError::InvalidValue(format!(
-                "Unknown object type: {}",
-                value
-            ))),
-        }
-    }
-}
-
 /// Object identifier (type + instance number)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ObjectIdentifier {
@@ -283,6 +200,31 @@ impl ObjectIdentifier {
     /// Check if instance number is valid (0-4194302)
     pub fn is_valid(&self) -> bool {
         self.instance <= 0x3FFFFF
+    }
+}
+
+impl From<u32> for ObjectIdentifier {
+    /// Convert from 32-bit object identifier.
+    /// See clause 20.2.14 of the BACnet specification.
+    fn from(value: u32) -> Self {
+        let object_type = (value >> 22) & 0x3FF;
+        let object_type = object_type.into();
+        let instance = value & 0x3FFFFF;
+        Self::new(object_type, instance)
+    }
+}
+
+impl TryFrom<ObjectIdentifier> for u32 {
+    type Error = EncodingError;
+
+    fn try_from(value: ObjectIdentifier) -> std::result::Result<Self, Self::Error> {
+        let object_type: u32 = value.object_type.into();
+
+        if object_type > 0x3FF || value.instance > 0x3FFFFF {
+            Err(EncodingError::ValueOutOfRange)
+        } else {
+            Ok((object_type << 22) | (value.instance & 0x3FFFFF))
+        }
     }
 }
 
@@ -469,7 +411,7 @@ impl BacnetObject for Device {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
             PropertyIdentifier::ObjectType => {
-                Ok(PropertyValue::Enumerated(self.object_type as u32))
+                Ok(PropertyValue::Enumerated(u32::from(self.object_type)))
             }
             PropertyIdentifier::SystemStatus => {
                 Ok(PropertyValue::Enumerated(self.system_status as u32))
@@ -671,6 +613,8 @@ pub mod file;
 /// Multi-state object types (MSI, MSO, MSV)
 pub mod multistate;
 
+pub mod object_type;
+pub use object_type::ObjectType;
 pub mod property_identifier;
 pub use property_identifier::PropertyIdentifier;
 
@@ -683,6 +627,8 @@ pub use multistate::{MultiStateInput, MultiStateOutput, MultiStateValue};
 
 #[cfg(feature = "std")]
 pub use database::{DatabaseBuilder, DatabaseStatistics, ObjectDatabase};
+
+use crate::EncodingError;
 
 #[cfg(test)]
 mod tests {

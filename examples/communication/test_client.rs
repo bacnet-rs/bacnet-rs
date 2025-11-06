@@ -3,7 +3,7 @@
 //! This example tests the high-level BACnet client utilities
 //! with comprehensive engineering units support.
 
-use bacnet_rs::client::{get_object_type_name, BacnetClient};
+use bacnet_rs::client::BacnetClient;
 use bacnet_rs::property::{decode_units, get_unit_id};
 use std::env;
 
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nObject summary:");
     for (obj_type, count) in &type_counts {
-        println!("  {}: {} objects", get_object_type_name(*obj_type), count);
+        println!("  {}: {} objects", obj_type, count);
     }
 
     // Read properties for first few objects
@@ -63,8 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for obj_info in &objects_info {
         println!(
             "\n{} Instance {}:",
-            get_object_type_name(obj_info.object_identifier.object_type),
-            obj_info.object_identifier.instance
+            obj_info.object_identifier.object_type, obj_info.object_identifier.instance
         );
 
         if let Some(name) = &obj_info.object_name {

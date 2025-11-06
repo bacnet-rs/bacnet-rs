@@ -182,18 +182,6 @@ fn demo_utility_functions() -> Result<(), Box<dyn std::error::Error>> {
     let time_str = util::bacnet_time_to_string(14, 30, 45, 50);
     println!("  BACnet time: {}", time_str);
 
-    // Object ID encoding/decoding
-    let obj_type = 0; // Analog Input
-    let instance = 1234;
-    if let Some(obj_id) = util::encode_object_id(obj_type, instance) {
-        println!("  Encoded object ID: 0x{:08X}", obj_id);
-        let (decoded_type, decoded_instance) = util::decode_object_id(obj_id);
-        println!(
-            "  Decoded: type={}, instance={}",
-            decoded_type, decoded_instance
-        );
-    }
-
     // Address parsing
     match util::parse_bacnet_address("192.168.1.100") {
         Ok(addr) => println!("  Parsed address: {}", addr),
