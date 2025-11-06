@@ -645,7 +645,7 @@ mod tests {
         });
 
         let who_is_apdu = Apdu::UnconfirmedRequest {
-            service_choice: UnconfirmedServiceChoice::WhoIs as u8,
+            service_choice: UnconfirmedServiceChoice::WhoIs,
             service_data: vec![],
         };
 
@@ -654,7 +654,7 @@ mod tests {
         
         match response.unwrap() {
             Apdu::UnconfirmedRequest { service_choice, .. } => {
-                assert_eq!(service_choice, UnconfirmedServiceChoice::IAm as u8);
+                assert_eq!(service_choice, UnconfirmedServiceChoice::IAm);
             },
             _ => panic!("Expected I-Am response"),
         }

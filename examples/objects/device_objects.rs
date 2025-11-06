@@ -758,7 +758,7 @@ fn read_device_object_list(
         socket,
         target_addr,
         invoke_id,
-        ConfirmedServiceChoice::ReadPropertyMultiple as u8,
+        ConfirmedServiceChoice::ReadPropertyMultiple,
         &encode_rpm_request(&rpm_request)?,
     )?;
 
@@ -845,7 +845,7 @@ fn read_objects_properties(
             socket,
             target_addr,
             invoke_id,
-            ConfirmedServiceChoice::ReadPropertyMultiple as u8,
+            ConfirmedServiceChoice::ReadPropertyMultiple,
             &encode_rpm_request(&rpm_request)?,
         ) {
             Ok(response_data) => {
@@ -885,7 +885,7 @@ fn send_confirmed_request(
     socket: &UdpSocket,
     target_addr: SocketAddr,
     invoke_id: u8,
-    service_choice: u8,
+    service_choice: ConfirmedServiceChoice,
     service_data: &[u8],
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Create confirmed request APDU

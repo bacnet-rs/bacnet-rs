@@ -129,7 +129,7 @@ impl BacnetClient {
         let response_data = self.send_confirmed_request(
             target_addr,
             invoke_id,
-            ConfirmedServiceChoice::ReadPropertyMultiple as u8,
+            ConfirmedServiceChoice::ReadPropertyMultiple,
             &self.encode_rpm_request(&rpm_request)?,
         )?;
 
@@ -191,7 +191,7 @@ impl BacnetClient {
             match self.send_confirmed_request(
                 target_addr,
                 invoke_id,
-                ConfirmedServiceChoice::ReadPropertyMultiple as u8,
+                ConfirmedServiceChoice::ReadPropertyMultiple,
                 &self.encode_rpm_request(&rpm_request)?,
             ) {
                 Ok(response_data) => {
@@ -268,7 +268,7 @@ impl BacnetClient {
         &self,
         target_addr: SocketAddr,
         invoke_id: u8,
-        service_choice: u8,
+        service_choice: ConfirmedServiceChoice,
         service_data: &[u8],
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let apdu = Apdu::ConfirmedRequest {

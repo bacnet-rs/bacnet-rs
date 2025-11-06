@@ -13,6 +13,7 @@ use bacnet_rs::{
     network::Npdu,
     object::{BacnetObject, Device, ObjectIdentifier, ObjectType, PropertyIdentifier},
     service::{IAmRequest, ReadPropertyRequest, UnconfirmedServiceChoice, WhoIsRequest},
+    ConfirmedServiceChoice,
 };
 
 use std::net::SocketAddr;
@@ -91,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Unconfirmed request (Who-Is)
     let whois_apdu = Apdu::UnconfirmedRequest {
-        service_choice: UnconfirmedServiceChoice::WhoIs as u8,
+        service_choice: UnconfirmedServiceChoice::WhoIs,
         service_data: whois_buffer,
     };
 
@@ -101,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let decoded_apdu = Apdu::decode(&encoded_apdu)?;
     match decoded_apdu {
         Apdu::UnconfirmedRequest { service_choice, .. } => {
-            println!("Decoded APDU service choice: {}", service_choice);
+            println!("Decoded APDU service choice: {:?}", service_choice);
         }
         _ => println!("Unexpected APDU type"),
     }
@@ -121,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         invoke_id: 42,
         sequence_number: None,
         proposed_window_size: None,
-        service_choice: 12, // Read Property
+        service_choice: ConfirmedServiceChoice::ReadProperty, // Read Property
         service_data: read_prop_data,
     };
 

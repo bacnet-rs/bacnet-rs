@@ -194,6 +194,8 @@ pub enum ServiceError {
     Aborted(AbortReason),
     /// Encoding/decoding error
     EncodingError(String),
+    /// Unsupported service choice
+    UnsupportedServiceChoice(u8),
 }
 
 impl fmt::Display for ServiceError {
@@ -205,6 +207,9 @@ impl fmt::Display for ServiceError {
             ServiceError::Rejected(reason) => write!(f, "Service rejected: {:?}", reason),
             ServiceError::Aborted(reason) => write!(f, "Service aborted: {:?}", reason),
             ServiceError::EncodingError(msg) => write!(f, "Encoding error: {}", msg),
+            ServiceError::UnsupportedServiceChoice(choice) => {
+                write!(f, "Unsupported service choice: {}", choice)
+            }
         }
     }
 }
@@ -259,7 +264,42 @@ pub enum ConfirmedServiceChoice {
     AuthRequest = 34,
 }
 
-/// Unconfirmed service choices
+impl TryFrom<u8> for ConfirmedServiceChoice {
+    type Error = ServiceError;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::AcknowledgeAlarm),
+            2 => Ok(Self::ConfirmedEventNotification),
+            3 => Ok(Self::GetAlarmSummary),
+            4 => Ok(Self::GetEnrollmentSummary),
+            29 => Ok(Self::GetEventInformation),
+            6 => Ok(Self::AtomicReadFile),
+            7 => Ok(Self::AtomicWriteFile),
+            8 => Ok(Self::AddListElement),
+            9 => Ok(Self::RemoveListElement),
+            10 => Ok(Self::CreateObject),
+            11 => Ok(Self::DeleteObject),
+            12 => Ok(Self::ReadProperty),
+            14 => Ok(Self::ReadPropertyMultiple),
+            15 => Ok(Self::WriteProperty),
+            16 => Ok(Self::WritePropertyMultiple),
+            17 => Ok(Self::DeviceCommunicationControl),
+            20 => Ok(Self::ReinitializeDevice),
+            21 => Ok(Self::VtOpen),
+            22 => Ok(Self::VtClose),
+            23 => Ok(Self::VtData),
+            24 => Ok(Self::Authenticate),
+            25 => Ok(Self::RequestKey),
+            26 => Ok(Self::ReadRange),
+            5 => Ok(Self::SubscribeCOV),
+            28 => Ok(Self::SubscribeCOVProperty),
+            34 => Ok(Self::AuthRequest),
+            _ => Err(ServiceError::UnsupportedServiceChoice(value)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum UnconfirmedServiceChoice {
@@ -272,6 +312,24 @@ pub enum UnconfirmedServiceChoice {
     WhoHas = 7,
     WhoIs = 8,
     UtcTimeSynchronization = 9,
+}
+
+impl TryFrom<u8> for UnconfirmedServiceChoice {
+    type Error = ServiceError;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::IHave),
+            1 => Ok(Self::UnconfirmedEventNotification),
+            3 => Ok(Self::UnconfirmedPrivateTransfer),
+            4 => Ok(Self::UnconfirmedTextMessage),
+            6 => Ok(Self::TimeSynchronization),
+            7 => Ok(Self::WhoHas),
+            8 => Ok(Self::WhoIs),
+            9 => Ok(Self::UtcTimeSynchronization),
+            _ => Err(ServiceError::UnsupportedServiceChoice(value)),
+        }
+    }
 }
 
 /// Reject reason codes

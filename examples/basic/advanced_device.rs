@@ -214,7 +214,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         invoke_id: 42,
         sequence_number: None,
         proposed_window_size: None,
-        service_choice: ConfirmedServiceChoice::WriteProperty as u8,
+        service_choice: ConfirmedServiceChoice::WriteProperty,
         service_data: write_data,
     };
 
@@ -231,7 +231,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         invoke_id: 43,
         sequence_number: None,
         proposed_window_size: None,
-        service_choice: ConfirmedServiceChoice::SubscribeCOV as u8,
+        service_choice: ConfirmedServiceChoice::SubscribeCOV,
         service_data: cov_buffer,
     };
 
