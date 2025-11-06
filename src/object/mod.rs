@@ -351,6 +351,28 @@ impl ObjectIdentifier {
     }
 }
 
+impl TryFrom<u32> for ObjectIdentifier {
+    type Error = ObjectError;
+
+    /// Convert from 32-bit object identifier. Returns an error if the object type is invalid.
+    /// See clause 20.2.14 of the BACnet specification.
+    fn try_from(value: u32) -> core::result::Result<Self, Self::Error> {
+        let object_type = ((value >> 22) & 0x3FF) as u16;
+        let object_type = object_type.try_into()?;
+        let instance = value & 0x3FFFFF;
+        Ok(Self::new(object_type, instance))
+    }
+}
+
+impl From<ObjectIdentifier> for u32 {
+    /// Convert to 32-bit object identifier.
+    /// See clause 20.2.14 of the BACnet specification.
+    fn from(value: ObjectIdentifier) -> Self {
+        let object_type = value.object_type as u16;
+        ((object_type as u32) << 22) | (value.instance & 0x3FFFFF)
+    }
+}
+
 /// Trait for all BACnet objects
 pub trait BacnetObject: Send + Sync {
     /// Get the object identifier

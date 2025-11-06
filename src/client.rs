@@ -412,10 +412,7 @@ impl BacnetClient {
 
         for spec in &request.read_access_specifications {
             // Object identifier - context tag 0
-            let object_id = encode_object_id(
-                spec.object_identifier.object_type as u16,
-                spec.object_identifier.instance,
-            );
+            let object_id: u32 = spec.object_identifier.into();
             buffer.push(0x0C);
             buffer.extend_from_slice(&object_id.to_be_bytes());
 
@@ -450,14 +447,14 @@ impl BacnetClient {
                 pos += 1;
                 let obj_id_bytes = [data[pos], data[pos + 1], data[pos + 2], data[pos + 3]];
                 let obj_id = u32::from_be_bytes(obj_id_bytes);
-                let (obj_type, instance) = decode_object_id(obj_id);
 
-                // Skip device object itself
-                if obj_type != 8 {
-                    if let Ok(object_type) = ObjectType::try_from(obj_type) {
-                        objects.push(ObjectIdentifier::new(object_type, instance));
+                if let Ok(identifier) = ObjectIdentifier::try_from(obj_id) {
+                    // Skip device object itself
+                    if identifier.object_type != ObjectType::Device {
+                        objects.push(identifier);
                     }
                 }
+
                 pos += 4;
             } else {
                 pos += 1;
@@ -512,18 +509,6 @@ fn extract_property_value(_data: &[u8], _property_id: u32) -> Option<PropertyVal
     // This would need a full implementation based on BACnet encoding rules
     // For now, return None as a placeholder
     None
-}
-
-/// Encode object identifier
-fn encode_object_id(object_type: u16, instance: u32) -> u32 {
-    ((object_type as u32) << 22) | (instance & 0x3FFFFF)
-}
-
-/// Decode object identifier  
-fn decode_object_id(encoded: u32) -> (u16, u32) {
-    let object_type = ((encoded >> 22) & 0x3FF) as u16;
-    let instance = encoded & 0x3FFFFF;
-    (object_type, instance)
 }
 
 /// Get object type display name
@@ -582,14 +567,16 @@ mod tests {
 
     #[test]
     fn test_object_id_encoding() {
-        let encoded = encode_object_id(0, 123);
-        let (obj_type, instance) = decode_object_id(encoded);
-        assert_eq!(obj_type, 0);
-        assert_eq!(instance, 123);
+        let object_id = ObjectIdentifier::new(ObjectType::AnalogInput, 123);
+        let encoded: u32 = object_id.into();
+        let decoded = ObjectIdentifier::try_from(encoded).unwrap();
+        assert_eq!(decoded.object_type, ObjectType::AnalogInput);
+        assert_eq!(decoded.instance, 123);
 
-        let encoded = encode_object_id(8, 5047);
-        let (obj_type, instance) = decode_object_id(encoded);
-        assert_eq!(obj_type, 8);
-        assert_eq!(instance, 5047);
+        let object_id = ObjectIdentifier::new(ObjectType::Device, 5047);
+        let encoded: u32 = object_id.into();
+        let decoded = ObjectIdentifier::try_from(encoded).unwrap();
+        assert_eq!(decoded.object_type, ObjectType::Device);
+        assert_eq!(decoded.instance, 5047);
     }
 }
