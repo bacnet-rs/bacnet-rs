@@ -314,9 +314,9 @@ impl BacnetObject for AnalogInput {
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
-            PropertyIdentifier::ObjectType => {
-                Ok(PropertyValue::Enumerated(ObjectType::AnalogInput as u32))
-            }
+            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u16::from(
+                ObjectType::AnalogInput,
+            ) as u32)),
             PropertyIdentifier::PresentValue => Ok(PropertyValue::Real(self.present_value)),
             PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
             _ => Err(ObjectError::UnknownProperty),
@@ -376,9 +376,9 @@ impl BacnetObject for AnalogOutput {
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
-            PropertyIdentifier::ObjectType => {
-                Ok(PropertyValue::Enumerated(ObjectType::AnalogOutput as u32))
-            }
+            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u16::from(
+                ObjectType::AnalogOutput,
+            ) as u32)),
             PropertyIdentifier::PresentValue => Ok(PropertyValue::Real(self.present_value)),
             PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
             PropertyIdentifier::PriorityArray => {
@@ -460,9 +460,9 @@ impl BacnetObject for AnalogValue {
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
-            PropertyIdentifier::ObjectType => {
-                Ok(PropertyValue::Enumerated(ObjectType::AnalogValue as u32))
-            }
+            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u16::from(
+                ObjectType::AnalogValue,
+            ) as u32)),
             PropertyIdentifier::PresentValue => Ok(PropertyValue::Real(self.present_value)),
             PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
             PropertyIdentifier::PriorityArray => {

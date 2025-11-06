@@ -51,16 +51,17 @@
 //! BACnet object identifiers combine object type and instance into a 32-bit value:
 //!
 //! ```rust
-//! use bacnet_rs::util::{encode_object_id, decode_object_id};
+//! use bacnet_rs::object::{ObjectIdentifier, ObjectType};
 //!
 //! // Encode object type 0 (Analog Input), instance 42
-//! let encoded = encode_object_id(0, 42).unwrap();
+//! let object_id = ObjectIdentifier::new(ObjectType::AnalogInput, 42);
+//! let encoded: u32 = object_id.into();
 //! println!("Encoded: 0x{:08X}", encoded);
 //!
 //! // Decode back to type and instance
-//! let (obj_type, instance) = decode_object_id(encoded);
-//! assert_eq!(obj_type, 0);
-//! assert_eq!(instance, 42);
+//! let object_id: ObjectIdentifier = encoded.into();
+//! assert_eq!(object_id.object_type, ObjectType::AnalogInput);
+//! assert_eq!(object_id.instance, 42);
 //! ```
 //!
 //! # Performance Monitoring
@@ -167,7 +168,8 @@
 //! Most utilities work in `no_std` environments with appropriate feature flags:
 //!
 //! ```rust
-//! use bacnet_rs::util::{crc16_mstp, encode_object_id};
+//! use bacnet_rs::util::crc16_mstp;
+//! use bacnet_rs::object::{ObjectIdentifier, ObjectType};
 //!
 //! fn main() {
 //!     // CRC calculation works without std
@@ -175,7 +177,8 @@
 //!     let crc = crc16_mstp(data);
 //!
 //!     // Object ID encoding works without std
-//!     let encoded = encode_object_id(0, 42).unwrap();
+//!     let object_id = ObjectIdentifier::new(ObjectType::Device, 42);
+//!     let encoded: u32 = object_id.into();
 //!     println!("CRC: 0x{:04X}, Encoded ID: 0x{:08X}", crc, encoded);
 //! }
 //! ```
@@ -300,26 +303,6 @@ pub fn bacnet_time_to_string(hour: u8, minute: u8, second: u8, hundredths: u8) -
         "{}:{}:{}.{}",
         hour_str, minute_str, second_str, hundredths_str
     )
-}
-
-/// Validate object instance number (must be 0-4194302)
-pub fn is_valid_instance_number(instance: u32) -> bool {
-    instance <= 0x3FFFFF
-}
-
-/// Convert object type and instance to object identifier (32-bit)
-pub fn encode_object_id(object_type: u16, instance: u32) -> Option<u32> {
-    if object_type > 0x3FF || instance > 0x3FFFFF {
-        return None;
-    }
-    Some(((object_type as u32) << 22) | instance)
-}
-
-/// Decode object identifier to object type and instance
-pub fn decode_object_id(object_id: u32) -> (u16, u32) {
-    let object_type = (object_id >> 22) as u16;
-    let instance = object_id & 0x3FFFFF;
-    (object_type, instance)
 }
 
 /// Buffer utilities for reading/writing data
@@ -962,6 +945,8 @@ impl<T: Clone> CircularBuffer<T> {
 
 /// Debug formatting utilities for BACnet data structures and protocol analysis
 pub mod debug {
+    use crate::object::ObjectIdentifier;
+
     use super::*;
 
     /// Format a BACnet property value for debugging
@@ -1190,44 +1175,8 @@ pub mod debug {
         }
 
         let obj_id = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
-        let (obj_type, instance) = decode_object_id(obj_id);
-
-        let type_name = match obj_type {
-            0 => "analog-input",
-            1 => "analog-output",
-            2 => "analog-value",
-            3 => "binary-input",
-            4 => "binary-output",
-            5 => "binary-value",
-            6 => "calendar",
-            7 => "command",
-            8 => "device",
-            9 => "event-enrollment",
-            10 => "file",
-            11 => "group",
-            12 => "loop",
-            13 => "multi-state-input",
-            14 => "multi-state-output",
-            15 => "notification-class",
-            16 => "program",
-            17 => "schedule",
-            18 => "averaging",
-            19 => "multi-state-value",
-            20 => "trend-log",
-            21 => "life-safety-point",
-            22 => "life-safety-zone",
-            23 => "accumulator",
-            24 => "pulse-converter",
-            25 => "event-log",
-            26 => "global-group",
-            27 => "trend-log-multiple",
-            28 => "load-control",
-            29 => "structured-view",
-            30 => "access-door",
-            _ => "unknown",
-        };
-
-        format!("ObjectID({} {})", type_name, instance)
+        let obj_id: ObjectIdentifier = obj_id.into();
+        format!("ObjectID({} {})", obj_id.object_type, obj_id.instance)
     }
 
     /// Format BACnet service choice for debugging

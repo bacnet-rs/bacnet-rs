@@ -151,7 +151,7 @@ pub const BACNET_MAX_MPDU: usize = 1497;
 #[cfg(test)]
 mod tests {
     use crate::object::ObjectIdentifier;
-    use crate::util::{crc16_mstp, decode_object_id, encode_object_id};
+    use crate::util::crc16_mstp;
     use crate::{ApplicationTag, EncodingError, ObjectType};
 
     #[cfg(not(feature = "std"))]
@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(tag as u8, 1);
 
         let obj_type = ObjectType::AnalogInput;
-        assert_eq!(obj_type as u16, 0);
+        assert_eq!(u16::from(obj_type), 0);
 
         let obj_id = ObjectIdentifier::new(ObjectType::Device, 123);
         assert_eq!(obj_id.instance, 123);
@@ -184,11 +184,5 @@ mod tests {
         let data = b"test";
         let crc = crc16_mstp(data);
         assert_ne!(crc, 0);
-
-        // Test object ID encoding/decoding
-        let encoded = encode_object_id(8, 123).unwrap();
-        let (obj_type, instance) = decode_object_id(encoded);
-        assert_eq!(obj_type, 8);
-        assert_eq!(instance, 123);
     }
 }

@@ -46,40 +46,7 @@ struct ObjectInfo {
 #[allow(dead_code)]
 impl ObjectInfo {
     fn new(object_identifier: ObjectIdentifier) -> Self {
-        let object_type_name = match object_identifier.object_type {
-            ObjectType::Device => "Device",
-            ObjectType::AnalogInput => "Analog Input",
-            ObjectType::AnalogOutput => "Analog Output",
-            ObjectType::AnalogValue => "Analog Value",
-            ObjectType::BinaryInput => "Binary Input",
-            ObjectType::BinaryOutput => "Binary Output",
-            ObjectType::BinaryValue => "Binary Value",
-            ObjectType::MultiStateInput => "Multi-State Input",
-            ObjectType::MultiStateOutput => "Multi-State Output",
-            ObjectType::MultiStateValue => "Multi-State Value",
-            ObjectType::Calendar => "Calendar",
-            ObjectType::Command => "Command",
-            ObjectType::EventEnrollment => "Event Enrollment",
-            ObjectType::File => "File",
-            ObjectType::Group => "Group",
-            ObjectType::Loop => "Loop",
-            ObjectType::NotificationClass => "Notification Class",
-            ObjectType::Program => "Program",
-            ObjectType::Schedule => "Schedule",
-            ObjectType::Averaging => "Averaging",
-            ObjectType::TrendLog => "Trend Log",
-            ObjectType::LifeSafetyPoint => "Life Safety Point",
-            ObjectType::LifeSafetyZone => "Life Safety Zone",
-            ObjectType::Accumulator => "Accumulator",
-            ObjectType::PulseConverter => "Pulse Converter",
-            ObjectType::EventLog => "Event Log",
-            ObjectType::GlobalGroup => "Global Group",
-            ObjectType::TrendLogMultiple => "Trend Log Multiple",
-            ObjectType::LoadControl => "Load Control",
-            ObjectType::StructuredView => "Structured View",
-            ObjectType::AccessDoor => "Access Door",
-        }
-        .to_string();
+        let object_type_name = object_identifier.object_type.to_string();
 
         Self {
             object_identifier,
@@ -770,12 +737,7 @@ fn read_device_object_list(
         match i.cmp(&10) {
             std::cmp::Ordering::Less => {
                 // Show first 10 for preview
-                println!(
-                    "  {}: {} Instance {}",
-                    i + 1,
-                    get_object_type_name(obj.object_type),
-                    obj.instance
-                );
+                println!("  {}: {} Instance {}", i + 1, obj.object_type, obj.instance);
             }
             std::cmp::Ordering::Equal => {
                 println!("  ... and {} more objects", object_list.len() - 10);
@@ -1029,10 +991,7 @@ fn encode_rpm_request(
 
     for spec in &request.read_access_specifications {
         // Object identifier - context tag 0
-        let object_id = encode_object_id(
-            spec.object_identifier.object_type as u16,
-            spec.object_identifier.instance,
-        );
+        let object_id: u32 = spec.object_identifier.into();
         buffer.push(0x0C); // Context tag 0, length 4
         buffer.extend_from_slice(&object_id.to_be_bytes());
 
@@ -1072,17 +1031,15 @@ fn parse_object_list_response(
             pos += 1;
             let obj_id_bytes = [data[pos], data[pos + 1], data[pos + 2], data[pos + 3]];
             let obj_id = u32::from_be_bytes(obj_id_bytes);
-            let (obj_type, instance) = decode_object_id(obj_id);
+            let obj_id: ObjectIdentifier = obj_id.into();
 
             // Skip the device object itself
-            if obj_type == 8 {
+            if obj_id.object_type == ObjectType::Device {
                 pos += 4;
                 continue;
             }
 
-            if let Ok(object_type) = ObjectType::try_from(obj_type) {
-                objects.push(ObjectIdentifier::new(object_type, instance));
-            }
+            objects.push(obj_id);
             pos += 4;
         } else {
             pos += 1;
@@ -1336,56 +1293,4 @@ fn extract_present_value(data: &[u8], object_type: ObjectType) -> Option<(String
 #[allow(dead_code)]
 fn extract_units(data: &[u8]) -> Option<(String, usize)> {
     decode_units(data)
-}
-
-/// Encode object identifier
-#[allow(dead_code)]
-fn encode_object_id(object_type: u16, instance: u32) -> u32 {
-    ((object_type as u32) << 22) | (instance & 0x3FFFFF)
-}
-
-/// Decode object identifier  
-#[allow(dead_code)]
-fn decode_object_id(encoded: u32) -> (u16, u32) {
-    let object_type = ((encoded >> 22) & 0x3FF) as u16;
-    let instance = encoded & 0x3FFFFF;
-    (object_type, instance)
-}
-
-/// Get object type name as string
-#[allow(dead_code)]
-fn get_object_type_name(object_type: ObjectType) -> &'static str {
-    match object_type {
-        ObjectType::Device => "Device",
-        ObjectType::AnalogInput => "Analog Input",
-        ObjectType::AnalogOutput => "Analog Output",
-        ObjectType::AnalogValue => "Analog Value",
-        ObjectType::BinaryInput => "Binary Input",
-        ObjectType::BinaryOutput => "Binary Output",
-        ObjectType::BinaryValue => "Binary Value",
-        ObjectType::MultiStateInput => "Multi-State Input",
-        ObjectType::MultiStateOutput => "Multi-State Output",
-        ObjectType::MultiStateValue => "Multi-State Value",
-        ObjectType::Calendar => "Calendar",
-        ObjectType::Command => "Command",
-        ObjectType::EventEnrollment => "Event Enrollment",
-        ObjectType::File => "File",
-        ObjectType::Group => "Group",
-        ObjectType::Loop => "Loop",
-        ObjectType::NotificationClass => "Notification Class",
-        ObjectType::Program => "Program",
-        ObjectType::Schedule => "Schedule",
-        ObjectType::Averaging => "Averaging",
-        ObjectType::TrendLog => "Trend Log",
-        ObjectType::LifeSafetyPoint => "Life Safety Point",
-        ObjectType::LifeSafetyZone => "Life Safety Zone",
-        ObjectType::Accumulator => "Accumulator",
-        ObjectType::PulseConverter => "Pulse Converter",
-        ObjectType::EventLog => "Event Log",
-        ObjectType::GlobalGroup => "Global Group",
-        ObjectType::TrendLogMultiple => "Trend Log Multiple",
-        ObjectType::LoadControl => "Load Control",
-        ObjectType::StructuredView => "Structured View",
-        ObjectType::AccessDoor => "Access Door",
-    }
 }

@@ -322,9 +322,9 @@ impl BacnetObject for BinaryInput {
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
-            PropertyIdentifier::ObjectType => {
-                Ok(PropertyValue::Enumerated(ObjectType::BinaryInput as u32))
-            }
+            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u16::from(
+                ObjectType::BinaryInput,
+            ) as u32)),
             PropertyIdentifier::PresentValue => {
                 Ok(PropertyValue::Enumerated(self.present_value as u32))
             }
@@ -386,9 +386,9 @@ impl BacnetObject for BinaryOutput {
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
-            PropertyIdentifier::ObjectType => {
-                Ok(PropertyValue::Enumerated(ObjectType::BinaryOutput as u32))
-            }
+            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u16::from(
+                ObjectType::BinaryOutput,
+            ) as u32)),
             PropertyIdentifier::PresentValue => {
                 Ok(PropertyValue::Enumerated(self.present_value as u32))
             }
@@ -481,9 +481,9 @@ impl BacnetObject for BinaryValue {
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
-            PropertyIdentifier::ObjectType => {
-                Ok(PropertyValue::Enumerated(ObjectType::BinaryValue as u32))
-            }
+            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u16::from(
+                ObjectType::BinaryValue,
+            ) as u32)),
             PropertyIdentifier::PresentValue => {
                 Ok(PropertyValue::Enumerated(self.present_value as u32))
             }

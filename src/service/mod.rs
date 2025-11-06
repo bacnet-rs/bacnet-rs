@@ -518,11 +518,7 @@ impl IAmRequest {
     /// Encode the I-Am request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
         // Device identifier (object identifier) - application tag
-        encode_object_identifier(
-            buffer,
-            self.device_identifier.object_type as u16,
-            self.device_identifier.instance,
-        )?;
+        encode_object_identifier(buffer, self.device_identifier)?;
 
         // Maximum APDU length accepted - application tag
         encode_unsigned(buffer, self.max_apdu_length_accepted)?;
@@ -543,8 +539,7 @@ impl IAmRequest {
         // Decode device identifier - application tag
         let ((object_type, instance), consumed) = decode_object_identifier(&data[pos..])?;
         let device_identifier = ObjectIdentifier {
-            object_type: crate::object::ObjectType::try_from(object_type)
-                .unwrap_or(crate::object::ObjectType::Device),
+            object_type: object_type.into(),
             instance,
         };
         pos += consumed;
@@ -606,11 +601,7 @@ impl ReadPropertyRequest {
     /// Encode the Read Property request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
         // Object identifier - context tag 0
-        let obj_id_bytes = encode_context_object_id(
-            self.object_identifier.object_type as u16,
-            self.object_identifier.instance,
-            0,
-        )?;
+        let obj_id_bytes = encode_context_object_id(self.object_identifier, 0)?;
         buffer.extend_from_slice(&obj_id_bytes);
 
         // Property identifier - context tag 1 (as enumerated)
@@ -660,12 +651,7 @@ impl ReadPropertyResponse {
         let mut pos = 0;
 
         // Decode object identifier - context tag 0
-        let ((object_type, instance), consumed) = decode_context_object_id(&data[pos..], 0)?;
-        let object_identifier = ObjectIdentifier {
-            object_type: crate::object::ObjectType::try_from(object_type)
-                .unwrap_or(crate::object::ObjectType::Device),
-            instance,
-        };
+        let (object_identifier, consumed) = decode_context_object_id(&data[pos..], 0)?;
         pos += consumed;
 
         // Decode property identifier - context tag 1
@@ -782,13 +768,7 @@ impl WritePropertyRequest {
     /// Encode the Write Property request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
         // Object identifier - context tag 0
-        let object_id = crate::util::encode_object_id(
-            self.object_identifier.object_type as u16,
-            self.object_identifier.instance,
-        )
-        .ok_or(crate::encoding::EncodingError::InvalidFormat(
-            "Invalid object identifier".to_string(),
-        ))?;
+        let object_id: u32 = self.object_identifier.into();
         buffer.push(0x0C); // Context tag 0, length 4
         buffer.extend_from_slice(&object_id.to_be_bytes());
 
@@ -828,12 +808,7 @@ impl WritePropertyRequest {
 
         let object_id_bytes = [data[pos], data[pos + 1], data[pos + 2], data[pos + 3]];
         let object_id = u32::from_be_bytes(object_id_bytes);
-        let (object_type, instance) = crate::util::decode_object_id(object_id);
-        let object_identifier = ObjectIdentifier {
-            object_type: crate::object::ObjectType::try_from(object_type)
-                .unwrap_or(crate::object::ObjectType::Device),
-            instance,
-        };
+        let object_identifier = object_id.into();
         pos += 4;
 
         // Decode property identifier - context tag 1
@@ -1034,13 +1009,7 @@ impl SubscribeCovRequest {
         buffer.push(self.subscriber_process_identifier as u8);
 
         // Monitored object identifier - context tag 1
-        let object_id = crate::util::encode_object_id(
-            self.monitored_object_identifier.object_type as u16,
-            self.monitored_object_identifier.instance,
-        )
-        .ok_or(crate::encoding::EncodingError::InvalidFormat(
-            "Invalid object identifier".to_string(),
-        ))?;
+        let object_id: u32 = self.monitored_object_identifier.into();
         buffer.push(0x1C); // Context tag 1, length 4
         buffer.extend_from_slice(&object_id.to_be_bytes());
 
@@ -1141,24 +1110,12 @@ impl CovNotificationRequest {
         buffer.push(self.subscriber_process_identifier as u8);
 
         // Initiating device identifier - context tag 1
-        let device_id = crate::util::encode_object_id(
-            self.initiating_device_identifier.object_type as u16,
-            self.initiating_device_identifier.instance,
-        )
-        .ok_or(crate::encoding::EncodingError::InvalidFormat(
-            "Invalid device identifier".to_string(),
-        ))?;
+        let device_id: u32 = self.initiating_device_identifier.into();
         buffer.push(0x1C); // Context tag 1, length 4
         buffer.extend_from_slice(&device_id.to_be_bytes());
 
         // Monitored object identifier - context tag 2
-        let object_id = crate::util::encode_object_id(
-            self.monitored_object_identifier.object_type as u16,
-            self.monitored_object_identifier.instance,
-        )
-        .ok_or(crate::encoding::EncodingError::InvalidFormat(
-            "Invalid object identifier".to_string(),
-        ))?;
+        let object_id: u32 = self.monitored_object_identifier.into();
         buffer.push(0x2C); // Context tag 2, length 4
         buffer.extend_from_slice(&object_id.to_be_bytes());
 
@@ -1362,13 +1319,7 @@ impl AtomicReadFileRequest {
     /// Encode the Atomic Read File request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
         // File identifier - context tag 0
-        let file_id = crate::util::encode_object_id(
-            self.file_identifier.object_type as u16,
-            self.file_identifier.instance,
-        )
-        .ok_or(crate::encoding::EncodingError::InvalidFormat(
-            "Invalid file identifier".to_string(),
-        ))?;
+        let file_id: u32 = self.file_identifier.into();
         buffer.push(0x0C); // Context tag 0, length 4
         buffer.extend_from_slice(&file_id.to_be_bytes());
 
@@ -1540,13 +1491,7 @@ impl AtomicWriteFileRequest {
     /// Encode the Atomic Write File request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
         // File identifier - context tag 0
-        let file_id = crate::util::encode_object_id(
-            self.file_identifier.object_type as u16,
-            self.file_identifier.instance,
-        )
-        .ok_or(crate::encoding::EncodingError::InvalidFormat(
-            "Invalid file identifier".to_string(),
-        ))?;
+        let file_id: u32 = self.file_identifier.into();
         buffer.push(0x0C); // Context tag 0, length 4
         buffer.extend_from_slice(&file_id.to_be_bytes());
 

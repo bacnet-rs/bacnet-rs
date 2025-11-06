@@ -328,7 +328,7 @@ fn demo_database_statistics(db: &ObjectDatabase) -> Result<(), Box<dyn std::erro
 
     println!("\nObject counts by type:");
     let mut type_counts: Vec<_> = stats.type_counts.iter().collect();
-    type_counts.sort_by_key(|(t, _)| **t as u16);
+    type_counts.sort_by_key(|(t, _)| u16::from(**t));
 
     for (object_type, count) in type_counts {
         println!("  {}: {}", format_object_type(*object_type), count);
@@ -365,7 +365,9 @@ fn format_property_value(value: &PropertyValue) -> String {
         PropertyValue::Double(d) => format!("{:.2}", d),
         PropertyValue::CharacterString(s) => format!("\"{}\"", s),
         PropertyValue::Enumerated(e) => format!("Enum({})", e),
-        PropertyValue::ObjectIdentifier(id) => format!("{}:{}", id.object_type as u16, id.instance),
+        PropertyValue::ObjectIdentifier(id) => {
+            format!("{}:{}", u16::from(id.object_type), id.instance)
+        }
         _ => "Complex Value".to_string(),
     }
 }

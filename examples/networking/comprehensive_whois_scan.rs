@@ -6,7 +6,7 @@
 use bacnet_rs::{
     datalink::bip::{BvlcFunction, BvlcHeader},
     network::{NetworkAddress, Npdu},
-    object::{ObjectType, PropertyIdentifier},
+    object::{ObjectIdentifier, ObjectType, PropertyIdentifier},
     service::{IAmRequest, ReadPropertyResponse, WhoIsRequest},
     vendor::get_vendor_name,
 };
@@ -41,8 +41,7 @@ struct BACnetDevice {
 
 #[derive(Debug, Clone)]
 struct BACnetObject {
-    object_type: ObjectType,
-    instance: u32,
+    object_id: ObjectIdentifier,
     name: Option<String>,
     present_value: Option<String>,
     description: Option<String>,
@@ -419,7 +418,7 @@ fn analyze_device(
                 }
 
                 // Read present value for I/O objects
-                if is_io_object(device.objects[i].object_type) {
+                if is_io_object(device.objects[i].object_id.object_type) {
                     if let Ok(value) = read_object_property_simple(
                         socket,
                         device,
@@ -434,7 +433,7 @@ fn analyze_device(
 
                     // Try to read units for analog objects
                     if matches!(
-                        device.objects[i].object_type,
+                        device.objects[i].object_id.object_type,
                         ObjectType::AnalogInput
                             | ObjectType::AnalogOutput
                             | ObjectType::AnalogValue
@@ -509,8 +508,8 @@ fn read_device_property(
 
     // Context tag 0: Object Identifier (BACnetObjectIdentifier)
     // Encode as 4-byte object identifier: (object_type << 22) | instance
-    let object_type = ObjectType::Device as u32; // 8
-    let object_id = (object_type << 22) | (device.device_id & 0x3FFFFF);
+    let object_id = ObjectIdentifier::new(ObjectType::Device, device.device_id);
+    let object_id: u32 = object_id.into();
     apdu.push(0x0C); // Context tag [0], length 4
     apdu.extend_from_slice(&object_id.to_be_bytes());
 
@@ -562,16 +561,14 @@ fn try_read_object_list_multiple_approaches(
                                 if let (Ok(obj_type), Ok(instance)) =
                                     (parts[0].parse::<u16>(), parts[1].parse::<u32>())
                                 {
-                                    if let Ok(object_type) = ObjectType::try_from(obj_type) {
-                                        let obj = BACnetObject {
-                                            object_type,
-                                            instance,
-                                            name: None,
-                                            present_value: None,
-                                            description: None,
-                                        };
-                                        device.objects.push(obj);
-                                    }
+                                    let object_type = obj_type.into();
+                                    let obj = BACnetObject {
+                                        object_id: ObjectIdentifier::new(object_type, instance),
+                                        name: None,
+                                        present_value: None,
+                                        description: None,
+                                    };
+                                    device.objects.push(obj);
                                 }
                             }
                         }
@@ -600,8 +597,7 @@ fn try_read_object_list_multiple_approaches(
 
                                     if let Some(obj_type) = object_type {
                                         let obj = BACnetObject {
-                                            object_type: obj_type,
-                                            instance,
+                                            object_id: ObjectIdentifier::new(obj_type, instance),
                                             name: None,
                                             present_value: None,
                                             description: None,
@@ -655,7 +651,8 @@ fn read_device_property_simple(
     ];
 
     // Object ID for device
-    let obj_id = ((ObjectType::Device as u32) << 22) | (device.device_id & 0x3FFFFF);
+    let obj_id = ObjectIdentifier::new(ObjectType::Device, device.device_id);
+    let obj_id: u32 = obj_id.into();
     apdu.push(0x0C); // Context tag 0, length 4
     apdu.extend_from_slice(&obj_id.to_be_bytes());
 
@@ -684,7 +681,8 @@ fn read_device_property_alternative(
     ];
 
     // Object ID for device
-    let obj_id = ((ObjectType::Device as u32) << 22) | (device.device_id & 0x3FFFFF);
+    let obj_id = ObjectIdentifier::new(ObjectType::Device, device.device_id);
+    let obj_id: u32 = obj_id.into();
     apdu.push(0x0C); // Context tag 0, length 4
     apdu.extend_from_slice(&obj_id.to_be_bytes());
 
@@ -713,10 +711,9 @@ fn read_object_list(
                         "   ✅ Successfully parsed {} objects from bulk read",
                         objects.len()
                     );
-                    for obj_id in objects {
+                    for object_id in objects {
                         let obj = BACnetObject {
-                            object_type: obj_id.object_type,
-                            instance: obj_id.instance,
+                            object_id,
                             name: None,
                             present_value: None,
                             description: None,
@@ -757,10 +754,9 @@ fn read_object_list(
                         i,
                     ) {
                         Ok(obj_data) => {
-                            if let Ok(obj_id) = parse_object_identifier(&obj_data) {
+                            if let Ok(object_id) = parse_object_identifier(&obj_data) {
                                 let obj = BACnetObject {
-                                    object_type: obj_id.object_type,
-                                    instance: obj_id.instance,
+                                    object_id,
                                     name: None,
                                     present_value: None,
                                     description: None,
@@ -800,10 +796,9 @@ fn read_object_list(
                     i,
                 ) {
                     Ok(obj_data) => {
-                        if let Ok(obj_id) = parse_object_identifier(&obj_data) {
+                        if let Ok(object_id) = parse_object_identifier(&obj_data) {
                             let obj = BACnetObject {
-                                object_type: obj_id.object_type,
-                                instance: obj_id.instance,
+                                object_id,
                                 name: None,
                                 present_value: None,
                                 description: None,
@@ -846,8 +841,8 @@ fn read_property_with_array_index(
 
     // Context tag 0: Object Identifier (BACnetObjectIdentifier)
     // Encode as 4-byte object identifier: (object_type << 22) | instance
-    let object_type = ObjectType::Device as u32; // 8
-    let object_id = (object_type << 22) | (device.device_id & 0x3FFFFF);
+    let object_id = ObjectIdentifier::new(ObjectType::Device, device.device_id);
+    let object_id: u32 = object_id.into();
     apdu.push(0x0C); // Context tag [0], length 4
     apdu.extend_from_slice(&object_id.to_be_bytes());
 
@@ -897,7 +892,7 @@ fn read_object_property_simple(
     ];
 
     // Object ID
-    let obj_id = ((object.object_type as u32) << 22) | (object.instance & 0x3FFFFF);
+    let obj_id: u32 = object.object_id.into();
     apdu.push(0x0C); // Context tag 0, length 4
     apdu.extend_from_slice(&obj_id.to_be_bytes());
 
@@ -912,7 +907,7 @@ fn read_object_property_simple(
 fn read_object_property(
     socket: &UdpSocket,
     device: &BACnetDevice,
-    object: &BACnetObject,
+    object: ObjectIdentifier,
     property_id: u32,
 ) -> Result<String, Box<dyn std::error::Error>> {
     static INVOKE_ID: AtomicU8 = AtomicU8::new(200);
@@ -931,7 +926,7 @@ fn read_object_property(
 
     // Context tag 0: Object Identifier (BACnetObjectIdentifier)
     // Encode as 4-byte object identifier: (object_type << 22) | instance
-    let object_id = ((object.object_type as u32) << 22) | (object.instance & 0x3FFFFF);
+    let object_id: u32 = object.into();
     apdu.push(0x0C); // Context tag [0], length 4
     apdu.extend_from_slice(&object_id.to_be_bytes());
 
@@ -1086,13 +1081,13 @@ fn display_comprehensive_summary(devices: &HashMap<u32, BACnetDevice>) {
                 // No limit - print all objects
 
                 let obj_name = obj.name.as_deref().unwrap_or("<unnamed>");
-                let type_name = object_type_name(obj.object_type);
+                let type_name = object_type_name(obj.object_id.object_type);
 
                 print!(
                     "      {:2}. {} {} '{}'",
                     i + 1,
                     type_name,
-                    obj.instance,
+                    obj.object_id.instance,
                     obj_name
                 );
 
@@ -1124,25 +1119,11 @@ fn encode_npdu_with_data(npdu: &Npdu, data: &[u8]) -> Vec<u8> {
     buffer
 }
 
-#[derive(Debug, Clone, Copy)]
-struct BACnetObjectId {
-    object_type: ObjectType,
-    instance: u32,
-}
-
-fn parse_object_identifier(data: &str) -> Result<BACnetObjectId, Box<dyn std::error::Error>> {
+fn parse_object_identifier(data: &str) -> Result<ObjectIdentifier, Box<dyn std::error::Error>> {
     if data.starts_with("0x") && data.len() >= 10 {
         if let Ok(obj_id_value) = u32::from_str_radix(&data[2..], 16) {
-            let object_type_num = (obj_id_value >> 22) & 0x3FF;
-            let instance = obj_id_value & 0x3FFFFF;
-
-            let object_type =
-                ObjectType::try_from(object_type_num as u16).unwrap_or(ObjectType::Device);
-
-            return Ok(BACnetObjectId {
-                object_type,
-                instance,
-            });
+            let object_id = obj_id_value.into();
+            return Ok(object_id);
         }
     }
     Err(format!("Could not parse object identifier: {}", data).into())
@@ -1150,7 +1131,7 @@ fn parse_object_identifier(data: &str) -> Result<BACnetObjectId, Box<dyn std::er
 
 fn parse_object_list_response(
     data: &str,
-) -> Result<Vec<BACnetObjectId>, Box<dyn std::error::Error>> {
+) -> Result<Vec<ObjectIdentifier>, Box<dyn std::error::Error>> {
     // Handle "Objects: [...]" format from parse_raw_response
     if data.starts_with("Objects: [") && data.ends_with("]") {
         return parse_object_identifiers_from_response(data);
@@ -1168,7 +1149,7 @@ fn parse_object_list_response(
 
 fn parse_object_list_from_bytes(
     data: &[u8],
-) -> Result<Vec<BACnetObjectId>, Box<dyn std::error::Error>> {
+) -> Result<Vec<ObjectIdentifier>, Box<dyn std::error::Error>> {
     let mut objects = Vec::new();
     let mut i = 0;
 
@@ -1193,15 +1174,9 @@ fn parse_object_list_from_bytes(
         if data[i] == 0xC4 && i + 4 < data.len() {
             let obj_bytes = [data[i + 1], data[i + 2], data[i + 3], data[i + 4]];
             let obj_id_value = u32::from_be_bytes(obj_bytes);
-            let object_type_num = (obj_id_value >> 22) & 0x3FF;
-            let instance = obj_id_value & 0x3FFFFF;
 
-            if let Ok(object_type) = ObjectType::try_from(object_type_num as u16) {
-                objects.push(BACnetObjectId {
-                    object_type,
-                    instance,
-                });
-            }
+            let object_id = obj_id_value.into();
+            objects.push(object_id);
             i += 5;
         } else {
             i += 1;
@@ -1213,7 +1188,7 @@ fn parse_object_list_from_bytes(
 
 fn parse_object_identifiers_from_response(
     response: &str,
-) -> Result<Vec<BACnetObjectId>, Box<dyn std::error::Error>> {
+) -> Result<Vec<ObjectIdentifier>, Box<dyn std::error::Error>> {
     // Handle hex-encoded response
     if let Some(hex_str) = response.strip_prefix("0x") {
         if let Ok(bytes) = decode_hex(hex_str) {
@@ -1252,10 +1227,7 @@ fn parse_object_identifiers_from_response(
                         }
                     };
 
-                    objects.push(BACnetObjectId {
-                        object_type,
-                        instance,
-                    });
+                    objects.push(ObjectIdentifier::new(object_type, instance));
                 }
             }
         }
@@ -1299,12 +1271,8 @@ fn parse_raw_response(apdu_data: &[u8]) -> Result<String, Box<dyn std::error::Er
                 apdu_data[i + 4],
             ];
             let obj_id_value = u32::from_be_bytes(obj_bytes);
-            let object_type_num = (obj_id_value >> 22) & 0x3FF;
-            let instance = obj_id_value & 0x3FFFFF;
-
-            if let Ok(object_type) = ObjectType::try_from(object_type_num as u16) {
-                objects.push(format!("{}:{}", object_type_name(object_type), instance));
-            }
+            let object_id: ObjectIdentifier = obj_id_value.into();
+            objects.push(format!("{}:{}", object_id.object_type, object_id.instance));
             i += 5;
         } else {
             i += 1;

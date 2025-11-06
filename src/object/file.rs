@@ -198,7 +198,7 @@ impl BacnetObject for File {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
             PropertyIdentifier::ObjectType => {
-                Ok(PropertyValue::Enumerated(ObjectType::File as u32))
+                Ok(PropertyValue::Enumerated(u16::from(ObjectType::File) as u32))
             }
             PropertyIdentifier::Archive => Ok(PropertyValue::Boolean(self.archive)),
             _ => Err(ObjectError::UnknownProperty),

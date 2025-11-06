@@ -3,11 +3,15 @@
 //! This example demonstrates the comprehensive utility functions including
 //! performance monitoring, statistics collection, and other helpers.
 
-use bacnet_rs::util::{
-    self, calculate_throughput, format_bytes,
-    performance::{PerformanceMonitor, ScopedTimer},
-    statistics::StatsCollector,
-    CircularBuffer, RetryConfig,
+use bacnet_rs::{
+    object::ObjectIdentifier,
+    util::{
+        self, calculate_throughput, format_bytes,
+        performance::{PerformanceMonitor, ScopedTimer},
+        statistics::StatsCollector,
+        CircularBuffer, RetryConfig,
+    },
+    ObjectType,
 };
 use std::{
     thread,
@@ -183,16 +187,15 @@ fn demo_utility_functions() -> Result<(), Box<dyn std::error::Error>> {
     println!("  BACnet time: {}", time_str);
 
     // Object ID encoding/decoding
-    let obj_type = 0; // Analog Input
     let instance = 1234;
-    if let Some(obj_id) = util::encode_object_id(obj_type, instance) {
-        println!("  Encoded object ID: 0x{:08X}", obj_id);
-        let (decoded_type, decoded_instance) = util::decode_object_id(obj_id);
-        println!(
-            "  Decoded: type={}, instance={}",
-            decoded_type, decoded_instance
-        );
-    }
+    let obj_id = ObjectIdentifier::new(ObjectType::AnalogInput, instance);
+    let obj_id: u32 = obj_id.into();
+    println!("  Encoded object ID: 0x{:08X}", obj_id);
+    let decoded_id: ObjectIdentifier = obj_id.into();
+    println!(
+        "  Decoded: type={}, instance={}",
+        decoded_id.object_type, decoded_id.instance
+    );
 
     // Address parsing
     match util::parse_bacnet_address("192.168.1.100") {

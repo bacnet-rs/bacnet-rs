@@ -48,8 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "\nReading properties from {} Instance {}...",
-        get_object_type_name(test_object.object_type),
-        test_object.instance
+        test_object.object_type, test_object.instance
     );
 
     let property_refs = vec![
@@ -102,8 +101,11 @@ fn parse_single_object_response(data: &[u8]) -> Result<(), Box<dyn std::error::E
                 if pos + 4 < data.len() {
                     let obj_id_bytes = [data[pos + 1], data[pos + 2], data[pos + 3], data[pos + 4]];
                     let obj_id = u32::from_be_bytes(obj_id_bytes);
-                    let (obj_type, instance) = decode_object_id(obj_id);
-                    println!("  Object: Type {} Instance {}", obj_type, instance);
+                    let obj_id: ObjectIdentifier = obj_id.into();
+                    println!(
+                        "  Object: Type {} Instance {}",
+                        obj_id.object_type, obj_id.instance
+                    );
                 }
                 pos += 5;
             }
@@ -395,10 +397,7 @@ fn encode_rpm_request(
     let mut buffer = Vec::new();
 
     for spec in &request.read_access_specifications {
-        let object_id = encode_object_id(
-            spec.object_identifier.object_type as u16,
-            spec.object_identifier.instance,
-        );
+        let object_id: u32 = spec.object_identifier.into();
         buffer.push(0x0C);
         buffer.extend_from_slice(&object_id.to_be_bytes());
 
@@ -418,26 +417,4 @@ fn encode_rpm_request(
     }
 
     Ok(buffer)
-}
-
-fn encode_object_id(object_type: u16, instance: u32) -> u32 {
-    ((object_type as u32) << 22) | (instance & 0x3FFFFF)
-}
-
-fn decode_object_id(encoded: u32) -> (u16, u32) {
-    let object_type = ((encoded >> 22) & 0x3FF) as u16;
-    let instance = encoded & 0x3FFFFF;
-    (object_type, instance)
-}
-
-fn get_object_type_name(object_type: ObjectType) -> &'static str {
-    match object_type {
-        ObjectType::AnalogInput => "Analog Input",
-        ObjectType::AnalogOutput => "Analog Output",
-        ObjectType::AnalogValue => "Analog Value",
-        ObjectType::BinaryInput => "Binary Input",
-        ObjectType::BinaryOutput => "Binary Output",
-        ObjectType::BinaryValue => "Binary Value",
-        _ => "Other",
-    }
 }

@@ -6,7 +6,7 @@
 use bacnet_rs::{
     datalink::bip::{BvlcFunction, BvlcHeader},
     network::{NetworkAddress, Npdu},
-    object::{ObjectType, PropertyIdentifier},
+    object::{ObjectIdentifier, ObjectType, PropertyIdentifier},
     service::{IAmRequest, ReadPropertyResponse, WhoIsRequest},
     vendor::get_vendor_name,
 };
@@ -497,8 +497,8 @@ fn read_property(
 
     // Context tag 0: Object Identifier (BACnetObjectIdentifier)
     // Encode as 4-byte object identifier: (object_type << 22) | instance
-    let object_type = ObjectType::Device as u32; // 8
-    let object_id = (object_type << 22) | (device.device_id & 0x3FFFFF);
+    let object_id = ObjectIdentifier::new(ObjectType::Device, device.device_id);
+    let object_id: u32 = object_id.into();
     apdu.push(0x0C); // Context tag [0], length 4
     apdu.extend_from_slice(&object_id.to_be_bytes());
 
@@ -765,18 +765,11 @@ fn parse_read_property_ack_manual(data: &[u8]) -> Result<String, Box<dyn std::er
     Err("Could not parse property value".into())
 }
 
-// Structure to represent a BACnet object identifier
-#[derive(Debug, Clone, Copy)]
-struct BACnetObjectId {
-    object_type: ObjectType,
-    instance: u32,
-}
-
 // Read the Object-List property to get all objects in the device
 fn read_object_list(
     socket: &UdpSocket,
     device: &RemoteDevice,
-) -> Result<Vec<BACnetObjectId>, Box<dyn std::error::Error>> {
+) -> Result<Vec<ObjectIdentifier>, Box<dyn std::error::Error>> {
     // Read Object-List property (property ID 76)
     match read_property(socket, device, PropertyIdentifier::ObjectList.into()) {
         Ok(_raw_data) => {
@@ -795,7 +788,7 @@ fn read_object_list(
 fn read_object_list_with_indices(
     socket: &UdpSocket,
     device: &RemoteDevice,
-) -> Result<Vec<BACnetObjectId>, Box<dyn std::error::Error>> {
+) -> Result<Vec<ObjectIdentifier>, Box<dyn std::error::Error>> {
     let mut objects = Vec::new();
 
     // First try to read index 0 to get the array length
@@ -853,7 +846,7 @@ fn read_object_list_with_indices(
 fn read_object_property(
     socket: &UdpSocket,
     device: &RemoteDevice,
-    object_id: &BACnetObjectId,
+    object_id: &ObjectIdentifier,
     property_id: u32,
 ) -> Result<String, Box<dyn std::error::Error>> {
     use std::sync::atomic::{AtomicU8, Ordering};
@@ -871,8 +864,7 @@ fn read_object_property(
 
     // ReadProperty Service Data
     // Context tag 0: Object Identifier
-    let object_type = object_id.object_type as u32;
-    let obj_id = (object_type << 22) | (object_id.instance & 0x3FFFFF);
+    let obj_id: u32 = u32::from(*object_id);
     apdu.push(0x0C); // Context tag [0], length 4
     apdu.extend_from_slice(&obj_id.to_be_bytes());
 
@@ -972,8 +964,8 @@ fn read_property_with_array_index(
 
     // ReadProperty Service Data
     // Context tag 0: Object Identifier (Device)
-    let object_type = ObjectType::Device as u32;
-    let obj_id = (object_type << 22) | (device.device_id & 0x3FFFFF);
+    let obj_id = ObjectIdentifier::new(ObjectType::Device, device.device_id);
+    let obj_id: u32 = obj_id.into();
     apdu.push(0x0C); // Context tag [0], length 4
     apdu.extend_from_slice(&obj_id.to_be_bytes());
 
@@ -1056,21 +1048,12 @@ fn read_property_with_array_index(
 }
 
 // Parse object identifier from hex string representation
-fn parse_object_identifier(data: &str) -> Result<BACnetObjectId, Box<dyn std::error::Error>> {
+fn parse_object_identifier(data: &str) -> Result<ObjectIdentifier, Box<dyn std::error::Error>> {
     // Expected format is hex string like "0x02000001" for object ID
     // First, let's try to parse it as hex
     if data.starts_with("0x") && data.len() >= 10 {
         if let Ok(obj_id_value) = u32::from_str_radix(&data[2..], 16) {
-            let object_type_num = (obj_id_value >> 22) & 0x3FF; // Upper 10 bits
-            let instance = obj_id_value & 0x3FFFFF; // Lower 22 bits
-
-            let object_type =
-                ObjectType::try_from(object_type_num as u16).unwrap_or(ObjectType::Device);
-
-            return Ok(BACnetObjectId {
-                object_type,
-                instance,
-            });
+            return Ok(obj_id_value.into());
         }
     }
 

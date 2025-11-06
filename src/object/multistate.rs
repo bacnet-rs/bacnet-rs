@@ -295,9 +295,9 @@ impl BacnetObject for MultiStateInput {
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
-            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(
-                ObjectType::MultiStateInput as u32,
-            )),
+            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u16::from(
+                ObjectType::MultiStateInput,
+            ) as u32)),
             PropertyIdentifier::PresentValue => {
                 Ok(PropertyValue::UnsignedInteger(self.present_value))
             }
@@ -359,9 +359,9 @@ impl BacnetObject for MultiStateOutput {
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
-            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(
-                ObjectType::MultiStateOutput as u32,
-            )),
+            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u16::from(
+                ObjectType::MultiStateOutput,
+            ) as u32)),
             PropertyIdentifier::PresentValue => {
                 Ok(PropertyValue::UnsignedInteger(self.present_value))
             }
@@ -445,9 +445,9 @@ impl BacnetObject for MultiStateValue {
             PropertyIdentifier::ObjectName => {
                 Ok(PropertyValue::CharacterString(self.object_name.clone()))
             }
-            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(
-                ObjectType::MultiStateValue as u32,
-            )),
+            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u16::from(
+                ObjectType::MultiStateValue,
+            ) as u32)),
             PropertyIdentifier::PresentValue => {
                 Ok(PropertyValue::UnsignedInteger(self.present_value))
             }

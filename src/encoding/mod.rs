@@ -136,6 +136,8 @@ use std::fmt;
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
+use crate::object::ObjectIdentifier;
+
 /// Result type for encoding operations
 #[cfg(feature = "std")]
 pub type Result<T> = std::result::Result<T, EncodingError>;
@@ -628,16 +630,12 @@ pub fn decode_time(data: &[u8]) -> Result<((u8, u8, u8, u8), usize)> {
 }
 
 /// Encode a BACnet object identifier
-pub fn encode_object_identifier(
-    buffer: &mut Vec<u8>,
-    object_type: u16,
-    instance: u32,
-) -> Result<()> {
-    if object_type > 0x3FF || instance > 0x3FFFFF {
+pub fn encode_object_identifier(buffer: &mut Vec<u8>, object_id: ObjectIdentifier) -> Result<()> {
+    if object_id.instance > 0x3FFFFF {
         return Err(EncodingError::ValueOutOfRange);
     }
 
-    let object_id = ((object_type as u32) << 22) | instance;
+    let object_id: u32 = object_id.into();
     encode_application_tag(buffer, ApplicationTag::ObjectIdentifier, 4)?;
     buffer.extend_from_slice(&object_id.to_be_bytes());
     Ok(())
@@ -856,20 +854,11 @@ pub fn decode_context_enumerated(data: &[u8], expected_tag: u8) -> Result<(u32, 
 }
 
 /// Encode a context-specific object identifier
-pub fn encode_context_object_id(
-    object_type: u16,
-    instance: u32,
-    tag_number: u8,
-) -> Result<Vec<u8>> {
+pub fn encode_context_object_id(object_id: ObjectIdentifier, tag_number: u8) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
 
-    // Validate inputs
-    if object_type > 0x3FF || instance > 0x3FFFFF {
-        return Err(EncodingError::ValueOutOfRange);
-    }
-
     // Combine object type and instance into 4-byte object identifier
-    let object_id = ((object_type as u32) << 22) | instance;
+    let object_id: u32 = object_id.into();
 
     // Encode context tag with length 4
     encode_context_tag(&mut buffer, tag_number, 4)?;
@@ -881,7 +870,10 @@ pub fn encode_context_object_id(
 }
 
 /// Decode a context-specific object identifier
-pub fn decode_context_object_id(data: &[u8], expected_tag: u8) -> Result<((u16, u32), usize)> {
+pub fn decode_context_object_id(
+    data: &[u8],
+    expected_tag: u8,
+) -> Result<(ObjectIdentifier, usize)> {
     let (tag_number, length, tag_consumed) = decode_context_tag(data)?;
 
     if tag_number != expected_tag {
@@ -903,10 +895,7 @@ pub fn decode_context_object_id(data: &[u8], expected_tag: u8) -> Result<((u16, 
         data[tag_consumed + 3],
     ]);
 
-    let object_type = (object_id >> 22) as u16;
-    let instance = object_id & 0x3FFFFF;
-
-    Ok(((object_type, instance), tag_consumed + 4))
+    Ok((object_id.into(), tag_consumed + 4))
 }
 
 impl TryFrom<u8> for ApplicationTag {
@@ -2140,6 +2129,8 @@ impl Default for EncodingManager {
 
 #[cfg(test)]
 mod tests {
+    use crate::ObjectType;
+
     use super::*;
 
     #[test]
@@ -2271,7 +2262,8 @@ mod tests {
     fn test_encode_decode_object_identifier() {
         let mut buffer = Vec::new();
 
-        encode_object_identifier(&mut buffer, 2, 12345).unwrap(); // Analog Value 12345
+        let object_id = ObjectIdentifier::new(ObjectType::AnalogValue, 12345);
+        encode_object_identifier(&mut buffer, object_id).unwrap(); // Analog Value 12345
         let ((object_type, instance), _) = decode_object_identifier(&buffer).unwrap();
         assert_eq!(object_type, 2);
         assert_eq!(instance, 12345);
