@@ -194,6 +194,30 @@ pub enum BvlcFunction {
     SecureBvll = 0x0D,
 }
 
+impl TryFrom<u8> for BvlcFunction {
+    type Error = DataLinkError;
+
+    fn try_from(value: u8) -> core::result::Result<Self, Self::Error> {
+        let function = match value {
+            0x0A => BvlcFunction::OriginalUnicastNpdu,
+            0x0B => BvlcFunction::OriginalBroadcastNpdu,
+            0x04 => BvlcFunction::ForwardedNpdu,
+            0x05 => BvlcFunction::RegisterForeignDevice,
+            0x02 => BvlcFunction::ReadBroadcastDistributionTable,
+            0x03 => BvlcFunction::ReadBroadcastDistributionTableAck,
+            0x06 => BvlcFunction::ReadForeignDeviceTable,
+            0x07 => BvlcFunction::ReadForeignDeviceTableAck,
+            0x08 => BvlcFunction::DeleteForeignDeviceTableEntry,
+            0x09 => BvlcFunction::DistributeBroadcastToNetwork,
+            0x0C => BvlcFunction::ForwardedNpduFromDevice,
+            0x0D => BvlcFunction::SecureBvll,
+            _ => return Err(DataLinkError::InvalidFrame),
+        };
+
+        Ok(function)
+    }
+}
+
 /// BVLC header structure for BACnet/IP messages.
 ///
 /// Every BACnet/IP message begins with this 4-byte header that identifies
@@ -330,21 +354,7 @@ impl BvlcHeader {
             return Err(DataLinkError::InvalidFrame);
         }
 
-        let function = match data[1] {
-            0x0A => BvlcFunction::OriginalUnicastNpdu,
-            0x0B => BvlcFunction::OriginalBroadcastNpdu,
-            0x04 => BvlcFunction::ForwardedNpdu,
-            0x05 => BvlcFunction::RegisterForeignDevice,
-            0x02 => BvlcFunction::ReadBroadcastDistributionTable,
-            0x03 => BvlcFunction::ReadBroadcastDistributionTableAck,
-            0x06 => BvlcFunction::ReadForeignDeviceTable,
-            0x07 => BvlcFunction::ReadForeignDeviceTableAck,
-            0x08 => BvlcFunction::DeleteForeignDeviceTableEntry,
-            0x09 => BvlcFunction::DistributeBroadcastToNetwork,
-            0x0C => BvlcFunction::ForwardedNpduFromDevice,
-            0x0D => BvlcFunction::SecureBvll,
-            _ => return Err(DataLinkError::InvalidFrame),
-        };
+        let function = data[1].try_into()?;
 
         let length = ((data[2] as u16) << 8) | (data[3] as u16);
 
