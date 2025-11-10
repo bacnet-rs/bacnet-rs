@@ -11,7 +11,9 @@ use bacnet_rs::{
     app::{Apdu, MaxApduSize, MaxSegments},
     datalink::{bip::BacnetIpDataLink, DataLink},
     network::Npdu,
-    object::{BacnetObject, Device, ObjectIdentifier, ObjectType, PropertyIdentifier},
+    object::{
+        BacnetObject, Device, ObjectIdentifier, ObjectType, PropertyIdentifier, Segmentation,
+    },
     service::{IAmRequest, ReadPropertyRequest, UnconfirmedServiceChoice, WhoIsRequest},
     ConfirmedServiceChoice,
 };
@@ -83,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create an I-Am response
     let device_id = ObjectIdentifier::new(ObjectType::Device, 12345);
-    let _iam = IAmRequest::new(device_id, 1476, 0, 999);
+    let _iam = IAmRequest::new(device_id, 1476, Segmentation::Both, 999);
     println!("Created I-Am response");
 
     // Create APDU examples

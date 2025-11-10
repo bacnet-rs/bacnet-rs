@@ -117,6 +117,7 @@
 //! - Proper object identifier encoding/decoding
 //! - Thread-safe object database implementation
 
+use core::fmt::Display;
 #[cfg(feature = "std")]
 use std::error::Error;
 
@@ -556,6 +557,34 @@ pub enum Segmentation {
     Transmit = 1,
     Receive = 2,
     NoSegmentation = 3,
+}
+
+impl TryFrom<u32> for Segmentation {
+    type Error = ObjectError;
+
+    fn try_from(value: u32) -> Result<Self> {
+        match value {
+            0 => Ok(Self::Both),
+            1 => Ok(Self::Transmit),
+            2 => Ok(Self::Receive),
+            3 => Ok(Self::NoSegmentation),
+            _ => Err(ObjectError::InvalidConfiguration(format!(
+                "Unknown segmentation: {}",
+                value
+            ))),
+        }
+    }
+}
+
+impl Display for Segmentation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Both => write!(f, "Both"),
+            Self::Transmit => write!(f, "Transmit"),
+            Self::Receive => write!(f, "Receive"),
+            Self::NoSegmentation => write!(f, "None"),
+        }
+    }
 }
 
 /// Protocol services supported bitfield

@@ -6,7 +6,7 @@
 use bacnet_rs::{
     datalink::bip::{BvlcFunction, BvlcHeader},
     network::{NetworkAddress, Npdu},
-    object::{ObjectIdentifier, ObjectType, PropertyIdentifier},
+    object::{ObjectIdentifier, ObjectType, PropertyIdentifier, Segmentation},
     service::{IAmRequest, ReadPropertyResponse, WhoIsRequest},
     vendor::get_vendor_name,
 };
@@ -30,7 +30,7 @@ struct BACnetDevice {
     vendor_id: u32,
     vendor_name: String,
     max_apdu: u32,
-    segmentation: u32,
+    segmentation: Segmentation,
     // Device properties
     object_name: Option<String>,
     model_name: Option<String>,

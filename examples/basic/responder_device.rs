@@ -5,7 +5,7 @@
 
 use bacnet_rs::{
     network::Npdu,
-    object::Device,
+    object::{Device, Segmentation},
     service::{IAmRequest, UnconfirmedServiceChoice, WhoIsRequest},
 };
 use std::{
@@ -173,7 +173,7 @@ fn create_iam_response(
     let iam = IAmRequest::new(
         device.identifier,
         1476, // Max APDU length
-        0,    // Segmentation: both
+        Segmentation::Both,
         device.vendor_identifier as u32,
     );
 

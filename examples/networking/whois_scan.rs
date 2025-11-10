@@ -6,6 +6,7 @@
 use bacnet_rs::{
     datalink::{bip::BacnetIpDataLink, DataLink, DataLinkAddress},
     network::Npdu,
+    object::Segmentation,
     service::{IAmRequest, UnconfirmedServiceChoice, WhoIsRequest},
     vendor::get_vendor_name,
 };
@@ -23,7 +24,7 @@ struct DiscoveredDevice {
     vendor_id: u32,
     vendor_name: String,
     max_apdu: u32,
-    segmentation: u32,
+    segmentation: Segmentation,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -128,16 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             device.vendor_name, device.vendor_id
                         );
                         println!("  Max APDU: {}", device.max_apdu);
-                        println!(
-                            "  Segmentation: {}",
-                            match device.segmentation {
-                                0 => "Both",
-                                1 => "Transmit",
-                                2 => "Receive",
-                                3 => "None",
-                                _ => "Unknown",
-                            }
-                        );
+                        println!("  Segmentation: {}", device.segmentation);
                         println!();
 
                         e.insert(device);

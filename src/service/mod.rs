@@ -376,7 +376,8 @@ use crate::encoding::{
     encode_context_object_id, encode_context_unsigned, encode_enumerated, encode_object_identifier,
     encode_unsigned, Result as EncodingResult,
 };
-use crate::object::{ObjectIdentifier, PropertyValue};
+use crate::object::{ObjectError, ObjectIdentifier, PropertyValue, Segmentation};
+use crate::EncodingError;
 
 /// Special array index value indicating all elements
 pub const BACNET_ARRAY_ALL: u32 = 0xFFFFFFFF;
@@ -494,7 +495,7 @@ pub struct IAmRequest {
     /// Maximum APDU length accepted
     pub max_apdu_length_accepted: u32,
     /// Segmentation supported
-    pub segmentation_supported: u32,
+    pub segmentation_supported: Segmentation,
     /// Vendor identifier
     pub vendor_identifier: u32,
 }
@@ -504,7 +505,7 @@ impl IAmRequest {
     pub fn new(
         device_identifier: ObjectIdentifier,
         max_apdu_length_accepted: u32,
-        segmentation_supported: u32,
+        segmentation_supported: Segmentation,
         vendor_identifier: u32,
     ) -> Self {
         Self {
@@ -524,7 +525,7 @@ impl IAmRequest {
         encode_unsigned(buffer, self.max_apdu_length_accepted)?;
 
         // Segmentation supported - application tag (enumerated)
-        encode_enumerated(buffer, self.segmentation_supported)?;
+        encode_enumerated(buffer, self.segmentation_supported as u32)?;
 
         // Vendor identifier - application tag
         encode_unsigned(buffer, self.vendor_identifier)?;
@@ -554,7 +555,9 @@ impl IAmRequest {
         Ok(IAmRequest::new(
             device_identifier,
             max_apdu_length_accepted,
-            segmentation_supported,
+            segmentation_supported
+                .try_into()
+                .map_err(|e: ObjectError| EncodingError::InvalidFormat(e.to_string()))?,
             vendor_identifier,
         ))
     }
@@ -1821,7 +1824,7 @@ mod tests {
     #[test]
     fn test_iam_request() {
         let device_id = ObjectIdentifier::new(ObjectType::Device, 123);
-        let iam = IAmRequest::new(device_id, 1476, 0, 999);
+        let iam = IAmRequest::new(device_id, 1476, Segmentation::Both, 999);
 
         assert_eq!(iam.device_identifier.instance, 123);
         assert_eq!(iam.max_apdu_length_accepted, 1476);

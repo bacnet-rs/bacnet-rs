@@ -15,7 +15,7 @@ use alloc::{collections::BTreeMap as HashMap, string::String, vec::Vec};
 use crate::{
     app::{Apdu, MaxApduSize, MaxSegments},
     network::Npdu,
-    object::{ObjectIdentifier, ObjectType},
+    object::{ObjectIdentifier, ObjectType, Segmentation},
     service::{
         ConfirmedServiceChoice, IAmRequest, PropertyReference, ReadAccessSpecification,
         ReadPropertyMultipleRequest, UnconfirmedServiceChoice, WhoIsRequest,
@@ -37,7 +37,7 @@ pub struct DeviceInfo {
     pub vendor_id: u32,
     pub vendor_name: String,
     pub max_apdu: u32,
-    pub segmentation: u32,
+    pub segmentation: Segmentation,
 }
 
 /// Object information with common properties
