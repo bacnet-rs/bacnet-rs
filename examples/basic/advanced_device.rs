@@ -65,7 +65,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("================");
     println!(
         "Device: {} (Instance: {})",
-        device.object_name, device.identifier.instance
+        device.object_name,
+        device.identifier().instance
     );
     println!("AI-1: {} = {:.1}°C", ai1.object_name, ai1.present_value);
     println!("AO-1: {} = {:.1}%", ao1.object_name, ao1.present_value);

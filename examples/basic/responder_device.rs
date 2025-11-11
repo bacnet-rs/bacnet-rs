@@ -5,8 +5,9 @@
 
 use bacnet_rs::{
     network::Npdu,
-    object::Device,
+    object::{object_name::ObjectName, Device},
     service::{IAmRequest, UnconfirmedServiceChoice, WhoIsRequest},
+    BacnetObject,
 };
 use std::{
     net::{SocketAddr, UdpSocket},
@@ -34,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     device.firmware_revision = "1.0.0".to_string();
 
     println!("Creating BACnet device:");
-    println!("  Device ID: {}", device.identifier.instance);
+    println!("  Device ID: {}", device.identifier().instance);
     println!("  Name: {}", device.object_name);
     println!("  Vendor: {}", device.format_vendor_display());
     println!("  Model: {}", device.model_name);
@@ -165,13 +166,16 @@ fn process_whois(data: &[u8]) -> Option<WhoIsRequest> {
 }
 
 /// Create an I-Am response message
-fn create_iam_response(
-    device: &Device,
+fn create_iam_response<O>(
+    device: &Device<O>,
     _destination: SocketAddr,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>, Box<dyn std::error::Error>>
+where
+    O: ObjectName,
+{
     // Create I-Am request
     let iam = IAmRequest::new(
-        device.identifier,
+        device.identifier(),
         1476, // Max APDU length
         0,    // Segmentation: both
         device.vendor_identifier as u32,
