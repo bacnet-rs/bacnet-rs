@@ -425,19 +425,23 @@ pub struct NetworkLayerMessage {
     /// Message type
     pub message_type: NetworkMessageType,
     /// Message data
-    pub data: Vec<u8>,
+    pub data: Option<Vec<u8>>,
 }
 
 impl NetworkLayerMessage {
     /// Create a new network layer message
-    pub fn new(message_type: NetworkMessageType, data: Vec<u8>) -> Self {
+    pub fn new(message_type: NetworkMessageType, data: Option<Vec<u8>>) -> Self {
         Self { message_type, data }
     }
 
     /// Encode network layer message
     pub fn encode(&self) -> Vec<u8> {
         let mut buffer = vec![self.message_type as u8];
-        buffer.extend_from_slice(&self.data);
+
+        if let Some(data) = &self.data {
+            buffer.extend_from_slice(data);
+        }
+
         buffer
     }
 
@@ -452,12 +456,16 @@ impl NetworkLayerMessage {
         let message_type = data[0].try_into()?;
 
         let message_data = if data.len() > 1 {
-            data[1..].to_vec()
+            Some(data[1..].to_vec())
         } else {
-            Vec::new()
+            None
         };
 
         Ok(NetworkLayerMessage::new(message_type, message_data))
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
     }
 }
 
@@ -582,16 +590,16 @@ impl RouterManager {
     ) -> Result<Option<NetworkLayerMessage>> {
         match message.message_type {
             NetworkMessageType::WhoIsRouterToNetwork => {
-                self.handle_who_is_router_to_network(&message.data)
+                self.handle_who_is_router_to_network(message.data())
             }
             NetworkMessageType::IAmRouterToNetwork => {
-                self.handle_i_am_router_to_network(&message.data)
+                self.handle_i_am_router_to_network(message.data())
             }
             NetworkMessageType::RouterBusyToNetwork => {
-                self.handle_router_busy_to_network(&message.data)
+                self.handle_router_busy_to_network(message.data())
             }
             NetworkMessageType::RouterAvailableToNetwork => {
-                self.handle_router_available_to_network(&message.data)
+                self.handle_router_available_to_network(message.data())
             }
             NetworkMessageType::WhatIsNetworkNumber => self.handle_what_is_network_number(),
             _ => Ok(None), // Other messages not handled here
@@ -599,16 +607,21 @@ impl RouterManager {
     }
 
     /// Handle Who-Is-Router-To-Network message
-    fn handle_who_is_router_to_network(&self, data: &[u8]) -> Result<Option<NetworkLayerMessage>> {
+    fn handle_who_is_router_to_network(
+        &self,
+        data: Option<&[u8]>,
+    ) -> Result<Option<NetworkLayerMessage>> {
         // If we know routes to the requested networks, respond with I-Am-Router-To-Network
-        if data.len() >= 2 {
-            let requested_network = u16::from_be_bytes([data[0], data[1]]);
-            if self.routing_table.find_route(requested_network).is_some() {
-                let response_data = vec![data[0], data[1]]; // Echo the network number
-                return Ok(Some(NetworkLayerMessage::new(
-                    NetworkMessageType::IAmRouterToNetwork,
-                    response_data,
-                )));
+        if let Some(data) = data {
+            if data.len() >= 2 {
+                let requested_network = u16::from_be_bytes([data[0], data[1]]);
+                if self.routing_table.find_route(requested_network).is_some() {
+                    let response_data = vec![data[0], data[1]]; // Echo the network number
+                    return Ok(Some(NetworkLayerMessage::new(
+                        NetworkMessageType::IAmRouterToNetwork,
+                        Some(response_data),
+                    )));
+                }
             }
         }
         Ok(None)
@@ -617,16 +630,18 @@ impl RouterManager {
     /// Handle I-Am-Router-To-Network message
     fn handle_i_am_router_to_network(
         &mut self,
-        data: &[u8],
+        data: Option<&[u8]>,
     ) -> Result<Option<NetworkLayerMessage>> {
         // Parse networks this router can reach
         let mut pos = 0;
         let mut networks = Vec::new();
 
-        while pos + 1 < data.len() {
-            let network = u16::from_be_bytes([data[pos], data[pos + 1]]);
-            networks.push(network);
-            pos += 2;
+        if let Some(data) = data {
+            while pos + 1 < data.len() {
+                let network = u16::from_be_bytes([data[pos], data[pos + 1]]);
+                networks.push(network);
+                pos += 2;
+            }
         }
 
         // Add router to routing table (would need router address from NPDU source)
@@ -638,12 +653,14 @@ impl RouterManager {
     /// Handle Router-Busy-To-Network message
     fn handle_router_busy_to_network(
         &mut self,
-        data: &[u8],
+        data: Option<&[u8]>,
     ) -> Result<Option<NetworkLayerMessage>> {
-        if data.len() >= 2 {
-            let network = u16::from_be_bytes([data[0], data[1]]);
-            if !self.busy_networks.contains(&network) {
-                self.busy_networks.push(network);
+        if let Some(data) = data {
+            if data.len() >= 2 {
+                let network = u16::from_be_bytes([data[0], data[1]]);
+                if !self.busy_networks.contains(&network) {
+                    self.busy_networks.push(network);
+                }
             }
         }
         Ok(None)
@@ -652,11 +669,13 @@ impl RouterManager {
     /// Handle Router-Available-To-Network message
     fn handle_router_available_to_network(
         &mut self,
-        data: &[u8],
+        data: Option<&[u8]>,
     ) -> Result<Option<NetworkLayerMessage>> {
-        if data.len() >= 2 {
-            let network = u16::from_be_bytes([data[0], data[1]]);
-            self.busy_networks.retain(|&n| n != network);
+        if let Some(data) = data {
+            if data.len() >= 2 {
+                let network = u16::from_be_bytes([data[0], data[1]]);
+                self.busy_networks.retain(|&n| n != network);
+            }
         }
         Ok(None)
     }
@@ -666,7 +685,7 @@ impl RouterManager {
         let response_data = self.local_network.to_be_bytes().to_vec();
         Ok(Some(NetworkLayerMessage::new(
             NetworkMessageType::NetworkNumberIs,
-            response_data,
+            Some(response_data),
         )))
     }
 
@@ -1538,7 +1557,7 @@ mod tests {
     fn test_network_message() {
         let message = NetworkLayerMessage::new(
             NetworkMessageType::WhoIsRouterToNetwork,
-            vec![0x00, 0x64], // Network 100
+            vec![0x00, 0x64].into(), // Network 100
         );
 
         let encoded = message.encode();
@@ -1548,7 +1567,7 @@ mod tests {
             decoded.message_type,
             NetworkMessageType::WhoIsRouterToNetwork
         );
-        assert_eq!(decoded.data, vec![0x00, 0x64]);
+        assert_eq!(decoded.data, vec![0x00, 0x64].into());
     }
 
     #[test]
@@ -1620,28 +1639,28 @@ mod tests {
         // Test Who-Is-Router-To-Network
         let who_is_msg = NetworkLayerMessage::new(
             NetworkMessageType::WhoIsRouterToNetwork,
-            vec![0x00, 0x64], // Network 100
+            vec![0x00, 0x64].into(), // Network 100
         );
         let response = manager.process_network_message(&who_is_msg).unwrap();
         assert!(response.is_some());
         if let Some(resp) = response {
             assert_eq!(resp.message_type, NetworkMessageType::IAmRouterToNetwork);
-            assert_eq!(resp.data, vec![0x00, 0x64]);
+            assert_eq!(resp.data, vec![0x00, 0x64].into());
         }
 
         // Test What-Is-Network-Number
-        let what_is_msg = NetworkLayerMessage::new(NetworkMessageType::WhatIsNetworkNumber, vec![]);
+        let what_is_msg = NetworkLayerMessage::new(NetworkMessageType::WhatIsNetworkNumber, None);
         let response = manager.process_network_message(&what_is_msg).unwrap();
         assert!(response.is_some());
         if let Some(resp) = response {
             assert_eq!(resp.message_type, NetworkMessageType::NetworkNumberIs);
-            assert_eq!(resp.data, vec![0x00, 0x01]); // Network 1
+            assert_eq!(resp.data, vec![0x00, 0x01].into()); // Network 1
         }
 
         // Test Router-Busy-To-Network
         let busy_msg = NetworkLayerMessage::new(
             NetworkMessageType::RouterBusyToNetwork,
-            vec![0x00, 0x64], // Network 100
+            vec![0x00, 0x64].into(), // Network 100
         );
         manager.process_network_message(&busy_msg).unwrap();
         assert!(manager.busy_networks.contains(&100));
@@ -1649,7 +1668,7 @@ mod tests {
         // Test Router-Available-To-Network
         let available_msg = NetworkLayerMessage::new(
             NetworkMessageType::RouterAvailableToNetwork,
-            vec![0x00, 0x64], // Network 100
+            vec![0x00, 0x64].into(), // Network 100
         );
         manager.process_network_message(&available_msg).unwrap();
         assert!(!manager.busy_networks.contains(&100));
