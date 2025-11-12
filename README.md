@@ -1,19 +1,10 @@
 # BACnet-RS
 
-A comprehensive BACnet (Building Automation and Control Networks) protocol stack implementation in Rust.
+A work-in-progress BACnet (Building Automation and Control Networks) protocol stack implementation in Rust.
 
 ## Overview
 
-This library provides a complete implementation of the BACnet protocol stack in Rust, designed as a modern alternative to the official C BACnet stack. It supports multiple data link layers, all standard BACnet services, and is suitable for both embedded and desktop applications.
-
-## Features
-
-- **Complete BACnet Implementation**: All standard objects, services, and data types
-- **Multiple Data Links**: BACnet/IP, MS/TP, Ethernet support
-- **Embedded Ready**: Designed for resource-constrained environments
-- **Async Support**: Optional async/await support with Tokio for network operations
-- **Type Safe**: Leverages Rust's type system to prevent protocol errors
-- **High Performance**: Zero-copy design with minimal allocations
+This library aims to provide a complete implementation of the BACnet protocol stack in Rust, designed as a modern alternative to the official C BACnet stack. It will support multiple data link layers, all standard BACnet services, and aims to be suitable for both embedded and desktop applications.
 
 ## Quick Start
 
