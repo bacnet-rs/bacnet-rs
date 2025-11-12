@@ -145,7 +145,7 @@ pub enum Apdu {
         invoke_id: u8,
         sequence_number: Option<u8>,
         proposed_window_size: Option<u8>,
-        service_choice: u8,
+        service_choice: ConfirmedServiceChoice,
         service_data: Vec<u8>,
     },
 
@@ -357,7 +357,7 @@ impl Apdu {
                 }
 
                 // Service choice
-                buffer.push(*service_choice);
+                buffer.push(*service_choice as u8);
 
                 // Service data
                 buffer.extend_from_slice(service_data);
@@ -624,7 +624,9 @@ impl Apdu {
                     ));
                 }
 
-                let service_choice = data[pos];
+                let service_choice = data[pos].try_into().map_err(|_| {
+                    ApplicationError::InvalidApdu("Unknown confirmed service choice".to_string())
+                })?;
                 pos += 1;
 
                 let service_data = if pos < data.len() {
@@ -1276,7 +1278,7 @@ impl ApplicationLayerHandler {
                             invoke_id,
                             sequence_number: None,
                             proposed_window_size: None,
-                            service_choice: service_choice as u8,
+                            service_choice,
                             service_data: response_data,
                         })),
                         Err(_) => {
@@ -1338,7 +1340,7 @@ impl ApplicationLayerHandler {
         &mut self,
         _pdu_flags: PduFlags,
         invoke_id: u8,
-        _service_choice: u8,
+        _service_choice: ConfirmedServiceChoice,
         _service_data: &[u8],
     ) -> Result<Option<Apdu>> {
         self.stats.complex_acks += 1;
