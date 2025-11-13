@@ -90,7 +90,7 @@
 //!
 //! // Create a read property request
 //! let object_id = ObjectIdentifier::new(ObjectType::AnalogInput, 1);
-//! let request = ReadPropertyRequest::new(object_id, PropertyIdentifier::PresentValue as u32);
+//! let request = ReadPropertyRequest::new(object_id, PropertyIdentifier::PresentValue.into());
 //!
 //! // This would be sent as a confirmed service
 //! let service_choice = ConfirmedServiceChoice::ReadProperty;
@@ -117,9 +117,9 @@
 //! // Create a read property multiple request
 //! let object_id = ObjectIdentifier::new(ObjectType::Device, 12345);
 //! let property_refs = vec![
-//!     PropertyReference::new(PropertyIdentifier::ObjectName as u32),
+//!     PropertyReference::new(PropertyIdentifier::ObjectName.into()),
 //!     PropertyReference::new(70), // ModelName
-//!     PropertyReference::new(PropertyIdentifier::VendorName as u32),
+//!     PropertyReference::new(PropertyIdentifier::VendorName.into()),
 //! ];
 //! let spec = ReadAccessSpecification::new(object_id, property_refs);
 //!

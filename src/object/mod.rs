@@ -264,71 +264,6 @@ impl TryFrom<u16> for ObjectType {
     }
 }
 
-/// BACnet property identifiers
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u32)]
-pub enum PropertyIdentifier {
-    AcceptedModes = 175,
-    AckedTransitions = 0,
-    AckRequired = 1,
-    Action = 2,
-    ActionText = 3,
-    ActiveText = 4,
-    ActiveVtSessions = 5,
-    AlarmValue = 6,
-    AlarmValues = 7,
-    All = 8,
-    AllWritesSuccessful = 9,
-    ApduSegmentTimeout = 10,
-    ApduTimeout = 11,
-    ApplicationSoftwareVersion = 12,
-    Archive = 13,
-    Bias = 14,
-    ChangeOfStateCount = 15,
-    ChangeOfStateTime = 16,
-    // ... many more properties
-    DatabaseRevision = 155,
-    FirmwareRevision = 44,
-    MaxApduLengthAccepted = 62,
-    ModelName = 70,
-    ObjectIdentifier = 75,
-    ObjectList = 76,
-    ObjectName = 77,
-    ObjectType = 79,
-    OutOfService = 81,
-    OutputUnits = 82,
-    PresentValue = 85,
-    ProtocolRevision = 139,
-    ProtocolVersion = 98,
-    SegmentationSupported = 107,
-    SystemStatus = 112,
-    VendorIdentifier = 120,
-    VendorName = 121,
-    Priority = 86,
-    PriorityArray = 87,
-    ProcessIdentifier = 89,
-    ProgramChange = 90,
-    ProgramLocation = 91,
-    ProgramState = 92,
-    ProportionalConstant = 93,
-    ProportionalConstantUnits = 94,
-    // Protocol Revision 30 - Authentication/Authorization Properties
-    AuthenticationFactors = 257,
-    AuthenticationPolicyList = 258,
-    AuthenticationPolicyNames = 259,
-    AuthenticationStatus = 260,
-    AuthorizationMode = 261,
-    AuthorizationExemptions = 364,
-    // Reserved range properties (Protocol Revision 30)
-    AuthorizationCache = 4194343,
-    AuthorizationGroups = 4194344,
-    AuthorizationPolicy = 4194345,
-    AuthorizationScope = 4194346,
-    AuthorizationServer = 4194347,
-    AuthorizationStatus = 4194348,
-    // ... continues with many more properties
-}
-
 /// Object identifier (type + instance number)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ObjectIdentifier {
@@ -735,6 +670,9 @@ pub mod engineering_units;
 pub mod file;
 /// Multi-state object types (MSI, MSO, MSV)
 pub mod multistate;
+
+pub mod property_identifier;
+pub use property_identifier::PropertyIdentifier;
 
 pub use analog::{AnalogInput, AnalogOutput, AnalogValue, EventState, Reliability};
 pub use binary::{BinaryInput, BinaryOutput, BinaryPV, BinaryValue, Polarity};

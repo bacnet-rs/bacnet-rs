@@ -382,11 +382,11 @@ fn read_device_properties(socket: &UdpSocket, device: &mut RemoteDevice) {
 
     // First read basic device properties
     let basic_properties = vec![
-        (PropertyIdentifier::ObjectName as u32, "Object Name"),
-        (PropertyIdentifier::ModelName as u32, "Model Name"),
-        (PropertyIdentifier::VendorName as u32, "Vendor Name"),
+        (PropertyIdentifier::ObjectName.into(), "Object Name"),
+        (PropertyIdentifier::ModelName.into(), "Model Name"),
+        (PropertyIdentifier::VendorName.into(), "Vendor Name"),
         (
-            PropertyIdentifier::FirmwareRevision as u32,
+            PropertyIdentifier::FirmwareRevision.into(),
             "Firmware Revision",
         ),
     ];
@@ -445,7 +445,7 @@ fn read_device_properties(socket: &UdpSocket, device: &mut RemoteDevice) {
                     socket,
                     device,
                     obj_id,
-                    PropertyIdentifier::ObjectName as u32,
+                    PropertyIdentifier::ObjectName.into(),
                 ) {
                     Ok(name) => println!("      Name: {}", name),
                     Err(_) => println!("      Name: <unavailable>"),
@@ -457,7 +457,7 @@ fn read_device_properties(socket: &UdpSocket, device: &mut RemoteDevice) {
                         socket,
                         device,
                         obj_id,
-                        PropertyIdentifier::PresentValue as u32,
+                        PropertyIdentifier::PresentValue.into(),
                     ) {
                         println!("      Present Value: {}", value);
                     }
@@ -778,7 +778,7 @@ fn read_object_list(
     device: &RemoteDevice,
 ) -> Result<Vec<BACnetObjectId>, Box<dyn std::error::Error>> {
     // Read Object-List property (property ID 76)
-    match read_property(socket, device, PropertyIdentifier::ObjectList as u32) {
+    match read_property(socket, device, PropertyIdentifier::ObjectList.into()) {
         Ok(_raw_data) => {
             // The Object-List is typically too large to read at once, so we might get an error
             // Let's try reading it with array indices
@@ -799,7 +799,7 @@ fn read_object_list_with_indices(
     let mut objects = Vec::new();
 
     // First try to read index 0 to get the array length
-    match read_property_with_array_index(socket, device, PropertyIdentifier::ObjectList as u32, 0) {
+    match read_property_with_array_index(socket, device, PropertyIdentifier::ObjectList.into(), 0) {
         Ok(length_str) => {
             if let Ok(length) = length_str.parse::<u32>() {
                 println!("    Object-List has {} objects", length);
@@ -810,7 +810,7 @@ fn read_object_list_with_indices(
                     match read_property_with_array_index(
                         socket,
                         device,
-                        PropertyIdentifier::ObjectList as u32,
+                        PropertyIdentifier::ObjectList.into(),
                         i,
                     ) {
                         Ok(obj_data) => {
@@ -831,7 +831,7 @@ fn read_object_list_with_indices(
                 match read_property_with_array_index(
                     socket,
                     device,
-                    PropertyIdentifier::ObjectList as u32,
+                    PropertyIdentifier::ObjectList.into(),
                     i,
                 ) {
                     Ok(obj_data) => {
