@@ -108,7 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Confirmed request (Read Property)
-    let read_prop = ReadPropertyRequest::new(device_id, PropertyIdentifier::ObjectName as u32);
+    let read_prop = ReadPropertyRequest::new(device_id, PropertyIdentifier::ObjectName.into());
 
     let mut read_prop_data = Vec::new();
     read_prop.encode(&mut read_prop_data)?;

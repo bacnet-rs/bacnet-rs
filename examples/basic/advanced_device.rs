@@ -117,15 +117,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ao_id = ObjectIdentifier::new(ObjectType::AnalogOutput, 1);
 
     let ai_props = vec![
-        PropertyReference::new(PropertyIdentifier::ObjectName as u32),
-        PropertyReference::new(PropertyIdentifier::PresentValue as u32),
-        PropertyReference::new(PropertyIdentifier::OutOfService as u32),
+        PropertyReference::new(PropertyIdentifier::ObjectName.into()),
+        PropertyReference::new(PropertyIdentifier::PresentValue.into()),
+        PropertyReference::new(PropertyIdentifier::OutOfService.into()),
     ];
 
     let ao_props = vec![
-        PropertyReference::new(PropertyIdentifier::ObjectName as u32),
-        PropertyReference::new(PropertyIdentifier::PresentValue as u32),
-        PropertyReference::new(PropertyIdentifier::PriorityArray as u32),
+        PropertyReference::new(PropertyIdentifier::ObjectName.into()),
+        PropertyReference::new(PropertyIdentifier::PresentValue.into()),
+        PropertyReference::new(PropertyIdentifier::PriorityArray.into()),
     ];
 
     let ai_spec = ReadAccessSpecification::new(ai_id, ai_props);
@@ -197,7 +197,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Write Property APDU
     let write_prop = WritePropertyRequest::with_priority(
         ao_id,
-        PropertyIdentifier::PresentValue as u32,
+        PropertyIdentifier::PresentValue.into(),
         vec![0x44, 0x42, 0x96, 0x00, 0x00], // Real 75.0 encoded
         8,
     );

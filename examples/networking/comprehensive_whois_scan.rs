@@ -332,7 +332,7 @@ fn analyze_device(
     // Read basic device properties
     println!("   📋 Reading device properties...");
 
-    if let Ok(name) = read_device_property(socket, device, PropertyIdentifier::ObjectName as u32) {
+    if let Ok(name) = read_device_property(socket, device, PropertyIdentifier::ObjectName.into()) {
         if let Ok(parsed_name) = parse_string_from_response(&name) {
             // Clean up device names with null bytes and control characters
             let cleaned_name = parsed_name
@@ -348,14 +348,14 @@ fn analyze_device(
         }
     }
 
-    if let Ok(model) = read_device_property(socket, device, PropertyIdentifier::ModelName as u32) {
+    if let Ok(model) = read_device_property(socket, device, PropertyIdentifier::ModelName.into()) {
         if let Ok(parsed_model) = parse_string_from_response(&model) {
             device.model_name = Some(parsed_model);
         }
     }
 
     if let Ok(firmware) =
-        read_device_property(socket, device, PropertyIdentifier::FirmwareRevision as u32)
+        read_device_property(socket, device, PropertyIdentifier::FirmwareRevision.into())
     {
         if let Ok(parsed_firmware) = parse_string_from_response(&firmware) {
             device.firmware_revision = Some(parsed_firmware);
@@ -380,7 +380,7 @@ fn analyze_device(
                     socket,
                     device,
                     &device.objects[i],
-                    PropertyIdentifier::ObjectName as u32,
+                    PropertyIdentifier::ObjectName.into(),
                 ) {
                     if let Ok(parsed_name) = parse_string_from_response(&name) {
                         // Clean up object names - remove null bytes and control characters
@@ -424,7 +424,7 @@ fn analyze_device(
                         socket,
                         device,
                         &device.objects[i],
-                        PropertyIdentifier::PresentValue as u32,
+                        PropertyIdentifier::PresentValue.into(),
                     ) {
                         // Special handling for binary objects
                         if let Ok(parsed_value) = parse_value_from_response(&value) {
@@ -443,7 +443,7 @@ fn analyze_device(
                             socket,
                             device,
                             &device.objects[i],
-                            PropertyIdentifier::OutputUnits as u32,
+                            PropertyIdentifier::OutputUnits.into(),
                         ) {
                             if let Ok(parsed_units) = parse_units_from_response(&units) {
                                 device.objects[i].description =
@@ -466,13 +466,13 @@ fn analyze_device(
     //         let objects_to_read = std::cmp::min(device.objects.len(), 10);
     //         for i in 0..objects_to_read {
     //             // Read object name
-    //             if let Ok(name) = read_object_property(socket, device, &device.objects[i], PropertyIdentifier::ObjectName as u32) {
+    //             if let Ok(name) = read_object_property(socket, device, &device.objects[i], PropertyIdentifier::ObjectName.into()) {
     //                 device.objects[i].name = Some(name);
     //             }
     //
     //             // Read present value for I/O objects
     //             if is_io_object(device.objects[i].object_type) {
-    //                 if let Ok(value) = read_object_property(socket, device, &device.objects[i], PropertyIdentifier::PresentValue as u32) {
+    //                 if let Ok(value) = read_object_property(socket, device, &device.objects[i], PropertyIdentifier::PresentValue.into()) {
     //                     device.objects[i].present_value = Some(value);
     //                 }
     //             }
@@ -535,7 +535,7 @@ fn try_read_object_list_multiple_approaches(
     device: &mut BACnetDevice,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     // First try to read the array length (index 0)
-    match read_property_with_array_index(socket, device, PropertyIdentifier::ObjectList as u32, 0) {
+    match read_property_with_array_index(socket, device, PropertyIdentifier::ObjectList.into(), 0) {
         Ok(length_response) => {
             // Parse the length - it might be a number like "84" or an encoded value
             let length = length_response.parse::<u32>().unwrap_or(100);
@@ -546,7 +546,7 @@ fn try_read_object_list_multiple_approaches(
                 match read_property_with_array_index(
                     socket,
                     device,
-                    PropertyIdentifier::ObjectList as u32,
+                    PropertyIdentifier::ObjectList.into(),
                     i,
                 ) {
                     Ok(obj_response) => {
@@ -701,7 +701,7 @@ fn read_object_list(
 ) -> Result<usize, Box<dyn std::error::Error>> {
     // First try to read the entire object list at once
     println!("   🔍 Attempting to read entire object list at once...");
-    match read_device_property(socket, device, PropertyIdentifier::ObjectList as u32) {
+    match read_device_property(socket, device, PropertyIdentifier::ObjectList.into()) {
         Ok(obj_list_data) => {
             println!(
                 "   ✅ Received object list response: {} bytes",
@@ -737,7 +737,7 @@ fn read_object_list(
 
     // Fallback to reading array length first
     println!("   🔄 Falling back to reading object list by array indices...");
-    match read_property_with_array_index(socket, device, PropertyIdentifier::ObjectList as u32, 0) {
+    match read_property_with_array_index(socket, device, PropertyIdentifier::ObjectList.into(), 0) {
         Ok(length_str) => {
             if let Ok(length) = length_str.parse::<u32>() {
                 println!("   📊 Object list has {} items", length);
@@ -753,7 +753,7 @@ fn read_object_list(
                     match read_property_with_array_index(
                         socket,
                         device,
-                        PropertyIdentifier::ObjectList as u32,
+                        PropertyIdentifier::ObjectList.into(),
                         i,
                     ) {
                         Ok(obj_data) => {
@@ -796,7 +796,7 @@ fn read_object_list(
                 match read_property_with_array_index(
                     socket,
                     device,
-                    PropertyIdentifier::ObjectList as u32,
+                    PropertyIdentifier::ObjectList.into(),
                     i,
                 ) {
                     Ok(obj_data) => {
