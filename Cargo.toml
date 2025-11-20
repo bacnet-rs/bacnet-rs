@@ -18,6 +18,7 @@ tokio = { version = "1.40", features = ["full"], optional = true }
 bytes = { version = "1.7", default-features = false }
 thiserror = { version = "1.0", optional = true }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
+bitflags = { version = "2.10.0", features = ["serde"] }
 
 # Networking
 socket2 = { version = "0.5", optional = true }

@@ -117,6 +117,7 @@
 //! - Proper object identifier encoding/decoding
 //! - Thread-safe object database implementation
 
+use bitflags::bitflags;
 use core::fmt::Display;
 #[cfg(feature = "std")]
 use std::error::Error;
@@ -136,6 +137,9 @@ pub type Result<T> = std::result::Result<T, ObjectError>;
 
 #[cfg(not(feature = "std"))]
 pub type Result<T> = core::result::Result<T, ObjectError>;
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// Errors that can occur with object operations
 #[derive(Debug)]
@@ -587,35 +591,83 @@ impl Display for Segmentation {
     }
 }
 
-/// Protocol services supported bitfield
-#[derive(Debug, Clone, Default)]
-pub struct ProtocolServicesSupported {
-    pub bits: [u8; 5], // 40 bits for all BACnet services
+bitflags! {
+    /// Protocol services supported bitfield
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    #[derive(Debug, Clone, Default, Eq, PartialEq)]
+    pub struct ProtocolServicesSupported: u64 {
+        const ACKNOWLEDGE_ALARM = 1 << 0;
+        const CONFIRMED_COV_NOTIFICATION = 1 << 1;
+        const CONFIRMED_EVENT_NOTIFICATION = 1 << 2;
+        const GET_ALARM_SUMMARY = 1 << 3;
+        const GET_ENROLLMENT_SUMMARY = 1 << 4;
+        const SUBSCRIBE_COV = 1 << 5;
+        const ATOMIC_READ_FILE = 1 << 6;
+        const ATOMIC_WRITE_FILE = 1 << 7;
+        const ADD_LIST_ELEMENT = 1 << 8;
+        const REMOVE_LIST_ELEMENT = 1 << 9;
+        const CREATE_OBJECT = 1 << 10;
+        const DELETE_OBJECT = 1 << 11;
+        const READ_PROPERTY = 1 << 12;
+        const READ_PROPERTY_CONDITIONAL = 1 << 13;
+        const READ_PROPERTY_MULTIPLE = 1 << 14;
+        const WRITE_PROPERTY = 1 << 15;
+        const WRITE_PROPERTY_MULTIPLE = 1 << 16;
+        const DEVICE_COMMUNICATION_CONTROL = 1 << 17;
+        const CONFIRMED_PRIVATE_TRANSFER = 1 << 18;
+        const CONFIRMED_TEXT_MESSAGE = 1 << 19;
+        const REINITIALIZE_DEVICE = 1 << 20;
+        const VT_OPEN = 1 << 21;
+        const VT_CLOSE = 1 << 22;
+        const VT_DATA = 1 << 23;
+        const AUTHENTICATE = 1 << 24;
+        const REQUEST_KEY = 1 << 25;
+        const I_AM = 1 << 26;
+        const I_HAVE = 1 << 27;
+        const UNCONFIRMED_COV_NOTIFICATION = 1 << 28;
+        const UNCONFIRMED_EVENT_NOTIFICATION = 1 << 29;
+        const UNCONFIRMED_PRIVATE_TRANSFER = 1 << 30;
+        const UNCONFIRMED_TEXT_MESSAGE = 1 << 31;
+        const TIME_SYNCHRONIZATION = 1 << 32;
+        const WHO_HAS = 1 << 33;
+        const WHO_IS = 1 << 34;
+        const READ_RANGE = 1 << 35;
+        const UTC_TIME_SYNCHRONIZATION = 1 << 36;
+        const LIFE_SAFETY_OPERATION = 1 << 37;
+        const SUBSCRIBE_COV_PROPERTY = 1 << 38;
+        const GET_EVENT_INFORMATION = 1 << 39;
+        const WRITE_GROUP = 1 << 40;
+        const SUBSCRIBE_COV_PROPERTY_MULTIPLE = 1 << 41;
+        const CONFIRMED_COV_NOTIFICATION_MULTIPLE = 1 << 42;
+        const UNCONFIRMED_COV_NOTIFICATION_MULTIPLE = 1 << 43;
+        const CONFIRMED_AUDIT_NOTIFICATION = 1 << 44;
+        const AUDIT_LOG_QUERY = 1 << 45;
+        const UNCONFIRMED_AUDIT_NOTIFICATION = 1 << 46;
+        const WHO_AM_I = 1 << 47;
+        const YOU_ARE = 1 << 48;
+        const AUTH_REQUEST = 1 << 49;
+    }
 }
 
 impl ProtocolServicesSupported {
-    /// Set a service as supported
-    pub fn set_service(&mut self, service: u8, supported: bool) {
-        if service < 40 {
-            let byte_index = service / 8;
-            let bit_index = service % 8;
-            if supported {
-                self.bits[byte_index as usize] |= 1 << bit_index;
-            } else {
-                self.bits[byte_index as usize] &= !(1 << bit_index);
+    pub fn to_bool_vec(&self) -> Vec<bool> {
+        let mut vec = Vec::new();
+        for i in 0..64 {
+            vec.push((self.bits() & (1 << i)) != 0);
+        }
+        vec
+    }
+}
+
+impl From<Vec<bool>> for ProtocolServicesSupported {
+    fn from(value: Vec<bool>) -> Self {
+        let mut services = ProtocolServicesSupported::empty();
+        for (v, f) in value.iter().zip(ProtocolServicesSupported::all().iter()) {
+            if *v {
+                services.insert(f);
             }
         }
-    }
-
-    /// Check if a service is supported
-    pub fn is_service_supported(&self, service: u8) -> bool {
-        if service < 40 {
-            let byte_index = service / 8;
-            let bit_index = service % 8;
-            (self.bits[byte_index as usize] & (1 << bit_index)) != 0
-        } else {
-            false
-        }
+        services
     }
 }
 
@@ -701,17 +753,12 @@ mod tests {
 
     #[test]
     fn test_protocol_services_supported() {
-        let mut services = ProtocolServicesSupported::default();
+        let services = ProtocolServicesSupported::ACKNOWLEDGE_ALARM
+            | ProtocolServicesSupported::READ_PROPERTY
+            | ProtocolServicesSupported::WRITE_PROPERTY;
 
-        // Set some services as supported
-        services.set_service(0, true); // Acknowledge-Alarm
-        services.set_service(12, true); // Read-Property
-        services.set_service(15, true); // Write-Property
-
-        assert!(services.is_service_supported(0));
-        assert!(services.is_service_supported(12));
-        assert!(services.is_service_supported(15));
-        assert!(!services.is_service_supported(1));
-        assert!(!services.is_service_supported(13));
+        let bools = services.to_bool_vec();
+        let services_new = ProtocolServicesSupported::from(bools);
+        assert_eq!(services, services_new);
     }
 }
