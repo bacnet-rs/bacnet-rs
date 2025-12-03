@@ -497,7 +497,7 @@ pub struct IAmRequest {
     /// Segmentation supported
     pub segmentation_supported: Segmentation,
     /// Vendor identifier
-    pub vendor_identifier: u32,
+    pub vendor_identifier: u16,
 }
 
 impl IAmRequest {
@@ -506,7 +506,7 @@ impl IAmRequest {
         device_identifier: ObjectIdentifier,
         max_apdu_length_accepted: u32,
         segmentation_supported: Segmentation,
-        vendor_identifier: u32,
+        vendor_identifier: u16,
     ) -> Self {
         Self {
             device_identifier,
@@ -528,7 +528,7 @@ impl IAmRequest {
         encode_enumerated(buffer, self.segmentation_supported as u32)?;
 
         // Vendor identifier - application tag
-        encode_unsigned(buffer, self.vendor_identifier)?;
+        encode_unsigned(buffer, self.vendor_identifier as u32)?;
 
         Ok(())
     }
@@ -558,7 +558,7 @@ impl IAmRequest {
             segmentation_supported
                 .try_into()
                 .map_err(|e: ObjectError| EncodingError::InvalidFormat(e.to_string()))?,
-            vendor_identifier,
+            vendor_identifier as u16,
         ))
     }
 }

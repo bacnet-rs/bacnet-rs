@@ -21,7 +21,7 @@ use std::{
 struct DiscoveredDevice {
     device_id: u32,
     address: SocketAddr,
-    vendor_id: u32,
+    vendor_id: u16,
     vendor_name: String,
     max_apdu: u32,
     segmentation: Segmentation,
@@ -230,7 +230,7 @@ fn process_response(data: &[u8], source: SocketAddr) -> Option<DiscoveredDevice>
 
     match IAmRequest::decode(&apdu[2..]) {
         Ok(iam) => {
-            let vendor_name = get_vendor_name(iam.vendor_identifier as u16)
+            let vendor_name = get_vendor_name(iam.vendor_identifier)
                 .unwrap_or("Unknown Vendor")
                 .to_string();
 

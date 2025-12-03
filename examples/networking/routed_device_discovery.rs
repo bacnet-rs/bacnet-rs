@@ -26,7 +26,7 @@ struct RemoteDevice {
     mac_address: Vec<u8>,
     socket_addr: SocketAddr,
     #[allow(dead_code)]
-    vendor_id: Option<u32>,
+    vendor_id: Option<u16>,
     vendor_name: Option<String>,
     object_name: Option<String>,
     model_name: Option<String>,
@@ -338,8 +338,7 @@ fn collect_i_am_responses(
                                                 (0, vec![])
                                             };
 
-                                        let vendor_name =
-                                            get_vendor_name(i_am.vendor_identifier as u16);
+                                        let vendor_name = get_vendor_name(i_am.vendor_identifier);
 
                                         let device = RemoteDevice {
                                             device_id,

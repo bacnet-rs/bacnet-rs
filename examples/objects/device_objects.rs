@@ -373,7 +373,7 @@ fn process_iam_response_with_routing(data: &[u8], source: SocketAddr) -> Option<
                 device_id: iam.device_identifier.instance,
                 address: source,
                 is_router,
-                vendor_id: Some(iam.vendor_identifier as u16),
+                vendor_id: Some(iam.vendor_identifier),
                 max_apdu_length: Some(iam.max_apdu_length_accepted as u16),
             })
         }

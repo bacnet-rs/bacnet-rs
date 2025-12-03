@@ -174,7 +174,7 @@ fn create_iam_response(
         device.identifier,
         1476, // Max APDU length
         Segmentation::Both,
-        device.vendor_identifier as u32,
+        device.vendor_identifier,
     );
 
     let mut iam_buffer = Vec::new();

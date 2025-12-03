@@ -34,7 +34,7 @@ pub struct BacnetClient {
 pub struct DeviceInfo {
     pub device_id: u32,
     pub address: SocketAddr,
-    pub vendor_id: u32,
+    pub vendor_id: u16,
     pub vendor_name: String,
     pub max_apdu: u32,
     pub segmentation: Segmentation,
@@ -351,7 +351,7 @@ impl BacnetClient {
 
         match IAmRequest::decode(&apdu[2..]) {
             Ok(iam) => {
-                let vendor_name = crate::vendor::get_vendor_name(iam.vendor_identifier as u16)
+                let vendor_name = crate::vendor::get_vendor_name(iam.vendor_identifier)
                     .unwrap_or("Unknown Vendor")
                     .to_string();
 

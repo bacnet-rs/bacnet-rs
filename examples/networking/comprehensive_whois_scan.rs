@@ -27,7 +27,7 @@ struct BACnetDevice {
     mac_address: Vec<u8>,
     socket_addr: SocketAddr,
     #[allow(dead_code)]
-    vendor_id: u32,
+    vendor_id: u16,
     vendor_name: String,
     max_apdu: u32,
     segmentation: Segmentation,
@@ -272,9 +272,8 @@ fn collect_i_am_responses(
                                             (0, vec![])
                                         };
 
-                                    let vendor_name =
-                                        get_vendor_name(i_am.vendor_identifier as u16)
-                                            .unwrap_or("Unknown Vendor");
+                                    let vendor_name = get_vendor_name(i_am.vendor_identifier)
+                                        .unwrap_or("Unknown Vendor");
 
                                     let device = BACnetDevice {
                                         device_id,
