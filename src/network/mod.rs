@@ -265,6 +265,18 @@ impl Npdu {
     pub fn is_network_message(&self) -> bool {
         self.control.network_message
     }
+
+    /// Set source address
+    pub fn set_source(&mut self, source: NetworkAddress) {
+        self.source = Some(source);
+        self.control.source_present = true;
+    }
+
+    /// Set destination address
+    pub fn set_destination(&mut self, destination: NetworkAddress) {
+        self.destination = Some(destination);
+        self.control.destination_present = true;
+    }
 }
 
 /// Router information
