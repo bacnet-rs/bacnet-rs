@@ -189,7 +189,7 @@ impl NpduControl {
 }
 
 /// Network address (network number + MAC address)
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NetworkAddress {
     /// Network number (0 = local network, 65535 = broadcast)
     pub network: u16,
