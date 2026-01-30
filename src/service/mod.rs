@@ -527,7 +527,7 @@ impl IAmRequest {
         encode_unsigned(buffer, self.max_apdu_length_accepted)?;
 
         // Segmentation supported - application tag (enumerated)
-        encode_enumerated(buffer, self.segmentation_supported as u32)?;
+        encode_enumerated(buffer, self.segmentation_supported as u32);
 
         // Vendor identifier - application tag
         encode_unsigned(buffer, self.vendor_identifier as u32)?;

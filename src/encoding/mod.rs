@@ -204,11 +204,7 @@ pub enum ApplicationTag {
 }
 
 /// Encode a BACnet application tag
-pub fn encode_application_tag(
-    buffer: &mut Vec<u8>,
-    tag: ApplicationTag,
-    length: usize,
-) -> Result<()> {
+pub fn encode_application_tag(buffer: &mut Vec<u8>, tag: ApplicationTag, length: usize) {
     let tag_byte = if length < 5 {
         (tag as u8) << 4 | (length as u8)
     } else {
@@ -228,8 +224,6 @@ pub fn encode_application_tag(
             buffer.extend_from_slice(&(length as u32).to_be_bytes());
         }
     }
-
-    Ok(())
 }
 
 /// Decode a BACnet application tag
@@ -277,7 +271,7 @@ pub fn decode_application_tag(data: &[u8]) -> Result<(ApplicationTag, usize, usi
 
 /// Encode a BACnet boolean value
 pub fn encode_boolean(buffer: &mut Vec<u8>, value: bool) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Boolean, if value { 1 } else { 0 })?;
+    encode_application_tag(buffer, ApplicationTag::Boolean, if value { 1 } else { 0 });
     Ok(())
 }
 
@@ -313,7 +307,7 @@ pub fn encode_unsigned(buffer: &mut Vec<u8>, value: u32) -> Result<()> {
         value.to_be_bytes().to_vec()
     };
 
-    encode_application_tag(buffer, ApplicationTag::UnsignedInt, bytes.len())?;
+    encode_application_tag(buffer, ApplicationTag::UnsignedInt, bytes.len());
     buffer.extend_from_slice(&bytes);
     Ok(())
 }
@@ -363,7 +357,7 @@ pub fn encode_signed(buffer: &mut Vec<u8>, value: i32) -> Result<()> {
         value.to_be_bytes().to_vec()
     };
 
-    encode_application_tag(buffer, ApplicationTag::SignedInt, bytes.len())?;
+    encode_application_tag(buffer, ApplicationTag::SignedInt, bytes.len());
     buffer.extend_from_slice(&bytes);
     Ok(())
 }
@@ -412,7 +406,7 @@ pub fn decode_signed(data: &[u8]) -> Result<(i32, usize)> {
 
 /// Encode a BACnet real (float) value
 pub fn encode_real(buffer: &mut Vec<u8>, value: f32) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Real, 4)?;
+    encode_application_tag(buffer, ApplicationTag::Real, 4);
     buffer.extend_from_slice(&value.to_be_bytes());
     Ok(())
 }
@@ -446,7 +440,7 @@ pub fn decode_real(data: &[u8]) -> Result<(f32, usize)> {
 
 /// Encode a BACnet octet string
 pub fn encode_octet_string(buffer: &mut Vec<u8>, value: &[u8]) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::OctetString, value.len())?;
+    encode_application_tag(buffer, ApplicationTag::OctetString, value.len());
     buffer.extend_from_slice(value);
     Ok(())
 }
@@ -476,7 +470,7 @@ pub fn encode_character_string(buffer: &mut Vec<u8>, value: &str) -> Result<()> 
         buffer,
         ApplicationTag::CharacterString,
         string_bytes.len() + 1,
-    )?;
+    );
     buffer.push(0); // Character set encoding (0 = ANSI X3.4)
     buffer.extend_from_slice(string_bytes);
     Ok(())
@@ -508,7 +502,7 @@ pub fn decode_character_string(data: &[u8]) -> Result<(String, usize)> {
 }
 
 /// Encode a BACnet enumerated value
-pub fn encode_enumerated(buffer: &mut Vec<u8>, value: u32) -> Result<()> {
+pub fn encode_enumerated(buffer: &mut Vec<u8>, value: u32) {
     let bytes = if value <= 0xFF {
         vec![value as u8]
     } else if value <= 0xFFFF {
@@ -520,9 +514,8 @@ pub fn encode_enumerated(buffer: &mut Vec<u8>, value: u32) -> Result<()> {
         value.to_be_bytes().to_vec()
     };
 
-    encode_application_tag(buffer, ApplicationTag::Enumerated, bytes.len())?;
+    encode_application_tag(buffer, ApplicationTag::Enumerated, bytes.len());
     buffer.extend_from_slice(&bytes);
-    Ok(())
 }
 
 /// Decode a BACnet enumerated value
@@ -559,7 +552,7 @@ pub fn decode_enumerated(data: &[u8]) -> Result<(u32, usize)> {
 
 /// Encode a BACnet date
 pub fn encode_date(buffer: &mut Vec<u8>, year: u16, month: u8, day: u8, weekday: u8) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Date, 4)?;
+    encode_application_tag(buffer, ApplicationTag::Date, 4);
     buffer.push(((year - 1900) % 256) as u8);
     buffer.push(month);
     buffer.push(day);
@@ -600,7 +593,7 @@ pub fn encode_time(
     second: u8,
     hundredths: u8,
 ) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Time, 4)?;
+    encode_application_tag(buffer, ApplicationTag::Time, 4);
     buffer.push(hour);
     buffer.push(minute);
     buffer.push(second);
@@ -634,7 +627,7 @@ pub fn encode_object_identifier(buffer: &mut Vec<u8>, object_id: ObjectIdentifie
     let object_id: u32 = object_id
         .try_into()
         .map_err(|_| EncodingError::ValueOutOfRange)?;
-    encode_application_tag(buffer, ApplicationTag::ObjectIdentifier, 4)?;
+    encode_application_tag(buffer, ApplicationTag::ObjectIdentifier, 4);
     buffer.extend_from_slice(&object_id.to_be_bytes());
     Ok(())
 }
@@ -668,7 +661,7 @@ pub fn decode_object_identifier(data: &[u8]) -> Result<(ObjectIdentifier, usize)
 
 /// Encode a BACnet double (64-bit float)
 pub fn encode_double(buffer: &mut Vec<u8>, value: f64) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Double, 8)?;
+    encode_application_tag(buffer, ApplicationTag::Double, 8);
     buffer.extend_from_slice(&value.to_be_bytes());
     Ok(())
 }
@@ -1103,7 +1096,7 @@ pub mod advanced {
                 8 - (bits.len() % 8)
             };
 
-            encode_application_tag(buffer, ApplicationTag::BitString, byte_count + 1)?;
+            encode_application_tag(buffer, ApplicationTag::BitString, byte_count + 1);
             buffer.push(unused_bits as u8);
 
             let mut current_byte = 0u8;
@@ -1653,7 +1646,7 @@ impl ErrorEncoder {
                 4
             },
         )?;
-        encode_enumerated(&mut self.buffer, error_class)?;
+        encode_enumerated(&mut self.buffer, error_class);
 
         // Error code with context tag 1
         advanced::context::encode_context_tag(
@@ -1667,7 +1660,7 @@ impl ErrorEncoder {
                 4
             },
         )?;
-        encode_enumerated(&mut self.buffer, error_code)?;
+        encode_enumerated(&mut self.buffer, error_code);
 
         Ok(())
     }
@@ -2227,7 +2220,7 @@ mod tests {
 
         for &test_value in &test_values {
             buffer.clear();
-            encode_enumerated(&mut buffer, test_value).unwrap();
+            encode_enumerated(&mut buffer, test_value);
             let (value, _) = decode_enumerated(&buffer).unwrap();
             assert_eq!(value, test_value);
         }
