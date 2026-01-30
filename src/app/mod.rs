@@ -52,6 +52,7 @@ use alloc::{string::String, vec::Vec};
 #[cfg(not(feature = "std"))]
 use core::time::Duration;
 
+use crate::encoding::{decode_enumerated, encode_enumerated};
 use crate::object::Segmentation;
 use crate::service::{AbortReason, ConfirmedServiceChoice, RejectReason, UnconfirmedServiceChoice};
 
@@ -161,7 +162,7 @@ pub enum Apdu {
     /// Error PDU
     Error {
         invoke_id: u8,
-        service_choice: u8,
+        service_choice: ConfirmedServiceChoice,
         error_class: u8,
         error_code: u8,
     },
@@ -402,11 +403,9 @@ impl Apdu {
                 // Invoke ID
                 buffer.push(*invoke_id);
                 // Service choice
-                buffer.push(*service_choice);
-                // Error class
-                buffer.push(*error_class);
-                // Error code
-                buffer.push(*error_code);
+                buffer.push(*service_choice as u8);
+                encode_enumerated(&mut buffer, *error_class as u32);
+                encode_enumerated(&mut buffer, *error_code as u32);
             }
 
             Apdu::Reject {
@@ -679,15 +678,23 @@ impl Apdu {
                 }
 
                 let invoke_id = data[1];
-                let service_choice = data[2];
-                let error_class = data[3];
-                let error_code = data[4];
+                let mut pos = 2;
+                let service_choice = data[pos].try_into().map_err(|_| {
+                    ApplicationError::InvalidApdu("Unknown confirmed service choice".to_string())
+                })?;
+                pos += 1;
+                let (error_class, offset) = decode_enumerated(&data[pos..]).map_err(|_| {
+                    ApplicationError::InvalidApdu("Invalid error class".to_string())
+                })?;
+                pos += offset;
+                let (error_code, _) = decode_enumerated(&data[pos..])
+                    .map_err(|_| ApplicationError::InvalidApdu("Invalid error code".to_string()))?;
 
                 Ok(Apdu::Error {
                     invoke_id,
                     service_choice,
-                    error_class,
-                    error_code,
+                    error_class: error_class as u8,
+                    error_code: error_code as u8,
                 })
             }
 
@@ -1287,7 +1294,7 @@ impl ApplicationLayerHandler {
                         Err(_) => {
                             Ok(Some(Apdu::Error {
                                 invoke_id,
-                                service_choice: service_choice as u8,
+                                service_choice,
                                 error_class: 0, // Object
                                 error_code: 0,  // Unknown object
                             }))
@@ -1355,7 +1362,7 @@ impl ApplicationLayerHandler {
     fn process_error(
         &mut self,
         invoke_id: u8,
-        _service_choice: u8,
+        _service_choice: ConfirmedServiceChoice,
         error_class: u8,
         error_code: u8,
     ) -> Result<Option<Apdu>> {
