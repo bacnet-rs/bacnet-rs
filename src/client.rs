@@ -15,7 +15,7 @@ use alloc::{collections::BTreeMap as HashMap, string::String, vec::Vec};
 use crate::{
     app::{Apdu, MaxApduSize, MaxSegments},
     network::Npdu,
-    object::{ObjectIdentifier, ObjectType, Segmentation},
+    object::{EngineeringUnits, ObjectIdentifier, ObjectType, Segmentation},
     service::{
         ConfirmedServiceChoice, IAmRequest, PropertyReference, ReadAccessSpecification,
         ReadPropertyMultipleRequest, UnconfirmedServiceChoice, WhoIsRequest,
@@ -47,7 +47,7 @@ pub struct ObjectInfo {
     pub object_name: Option<String>,
     pub description: Option<String>,
     pub present_value: Option<PropertyValue>,
-    pub units: Option<String>,
+    pub units: Option<EngineeringUnits>,
     pub status_flags: Option<Vec<bool>>,
 }
 

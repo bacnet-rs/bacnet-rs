@@ -6,7 +6,7 @@
 use bacnet_rs::{
     app::{Apdu, MaxApduSize, MaxSegments},
     network::Npdu,
-    object::{ObjectIdentifier, ObjectType},
+    object::{EngineeringUnits, ObjectIdentifier, ObjectType},
     property::decode_units,
     service::{
         ConfirmedServiceChoice, IAmRequest, PropertyReference, ReadAccessSpecification,
@@ -39,7 +39,7 @@ struct ObjectInfo {
     object_name: Option<String>,
     description: Option<String>,
     present_value: Option<String>,
-    units: Option<String>,
+    units: Option<EngineeringUnits>,
     object_type_name: String,
 }
 
@@ -1172,7 +1172,7 @@ fn parse_rpm_response(
         // Units (for analog objects)
         if pos < data.len() && data[pos] == 0x91 {
             // Enumerated tag
-            if let Some((units, consumed)) = extract_units(&data[pos..]) {
+            if let Some((units, consumed)) = decode_units(&data[pos..]) {
                 // Debug: comment out for clean output
                 // println!("Debug: Extracted units: '{}'", units);
                 objects_info[current_obj_index].units = Some(units);
@@ -1287,10 +1287,4 @@ fn extract_present_value(data: &[u8], object_type: ObjectType) -> Option<(String
         }
         _ => Some(("N/A".to_string(), 1)),
     }
-}
-
-/// Extract units enumeration
-#[allow(dead_code)]
-fn extract_units(data: &[u8]) -> Option<(String, usize)> {
-    decode_units(data)
 }

@@ -4,7 +4,7 @@
 //! with comprehensive engineering units support.
 
 use bacnet_rs::client::BacnetClient;
-use bacnet_rs::property::{decode_units, get_unit_id};
+use bacnet_rs::property::decode_units;
 use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -79,42 +79,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(units) = &obj_info.units {
-            println!("  Units: {}", units);
-            if let Some(unit_id) = get_unit_id(units) {
-                println!("  Unit ID: {}", unit_id);
-            }
+            println!("  Units: {}", units.bacnet_name());
+            println!("  Unit ID: {}", u32::from(*units));
         }
 
         if let Some(flags) = &obj_info.status_flags {
             println!("  Status Flags: {:?}", flags);
-        }
-    }
-
-    // Test some unit conversions
-    println!("\nUnit System Test:");
-    println!("================");
-
-    let test_units = vec![
-        ("degrees-celsius", 62),
-        ("kilowatts", 115),
-        ("cubic-feet-per-minute", 94),
-        ("percent", 1),
-        ("amperes", 23),
-        ("pounds-per-square-inch", 72),
-    ];
-
-    for (unit_name, expected_id) in test_units {
-        if let Some(actual_id) = get_unit_id(unit_name) {
-            if actual_id == expected_id {
-                println!("✓ {}: ID {} (correct)", unit_name, actual_id);
-            } else {
-                println!(
-                    "✗ {}: expected ID {}, got {}",
-                    unit_name, expected_id, actual_id
-                );
-            }
-        } else {
-            println!("✗ {}: not found in unit database", unit_name);
         }
     }
 
@@ -130,13 +100,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for (data, expected_name) in test_data {
-        if let Some((actual_name, consumed)) = decode_units(&data) {
-            if actual_name == expected_name && consumed == 2 {
-                println!("✓ Decoded unit ID {}: {} (correct)", data[1], actual_name);
+        if let Some((units, consumed)) = decode_units(&data) {
+            if units.bacnet_name() == expected_name && consumed == 2 {
+                println!(
+                    "✓ Decoded unit ID {}: {} (correct)",
+                    data[1],
+                    units.bacnet_name()
+                );
             } else {
                 println!(
                     "✗ Decoded unit ID {}: expected '{}', got '{}'",
-                    data[1], expected_name, actual_name
+                    data[1],
+                    expected_name,
+                    units.bacnet_name()
                 );
             }
         } else {

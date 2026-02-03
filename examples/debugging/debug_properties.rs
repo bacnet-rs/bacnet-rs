@@ -164,8 +164,8 @@ fn parse_single_object_response(data: &[u8]) -> Result<(), Box<dyn std::error::E
                 println!("Position {}: Found enumerated tag (0x91)", pos);
                 if pos + 1 < data.len() {
                     println!("  Enum value: {}", data[pos + 1]);
-                    if let Some((units_name, _)) = decode_units(&data[pos..pos + 2]) {
-                        println!("  Units: {}", units_name);
+                    if let Some((units, _)) = decode_units(&data[pos..pos + 2]) {
+                        println!("  Units: {}", units.bacnet_name());
                     }
                 }
                 pos += 2;
