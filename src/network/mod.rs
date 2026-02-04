@@ -56,6 +56,9 @@ use alloc::{
     vec::Vec,
 };
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[cfg(feature = "std")]
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -189,6 +192,7 @@ impl NpduControl {
 }
 
 /// Network address (network number + MAC address)
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NetworkAddress {
     /// Network number (0 = local network, 65535 = broadcast)
