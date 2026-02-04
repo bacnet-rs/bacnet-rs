@@ -5,10 +5,13 @@
 
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::object::{EngineeringUnits, ObjectType};
 
 /// Decoded BACnet property value
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyValue {
     /// Real (float) value
