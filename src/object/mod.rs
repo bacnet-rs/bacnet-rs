@@ -554,6 +554,7 @@ pub enum DeviceStatus {
 }
 
 /// Segmentation support enumeration
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum Segmentation {
