@@ -187,6 +187,7 @@ impl fmt::Display for ObjectError {
 impl Error for ObjectError {}
 
 /// Object identifier (type + instance number)
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ObjectIdentifier {
     pub object_type: ObjectType,
