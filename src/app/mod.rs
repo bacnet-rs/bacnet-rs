@@ -167,7 +167,10 @@ pub enum Apdu {
     },
 
     /// Reject PDU
-    Reject { invoke_id: u8, reject_reason: u8 },
+    Reject {
+        invoke_id: u8,
+        reject_reason: RejectReason,
+    },
 
     /// Abort PDU
     Abort {
@@ -415,7 +418,7 @@ impl Apdu {
                 // Invoke ID
                 buffer.push(*invoke_id);
                 // Reject reason
-                buffer.push(*reject_reason);
+                buffer.push(u8::from(*reject_reason));
             }
 
             Apdu::Abort {
@@ -700,7 +703,7 @@ impl Apdu {
 
                 Ok(Apdu::Reject {
                     invoke_id,
-                    reject_reason,
+                    reject_reason: reject_reason.into(),
                 })
             }
 
@@ -1263,7 +1266,7 @@ impl ApplicationLayerHandler {
         if !self.supported_services.confirmed.contains(&service_choice) {
             return Ok(Some(Apdu::Reject {
                 invoke_id,
-                reject_reason: RejectReason::UnrecognizedService as u8,
+                reject_reason: RejectReason::UnrecognizedService,
             }));
         }
 
@@ -1300,7 +1303,7 @@ impl ApplicationLayerHandler {
             }
             _ => Ok(Some(Apdu::Reject {
                 invoke_id,
-                reject_reason: RejectReason::UnrecognizedService as u8,
+                reject_reason: RejectReason::UnrecognizedService,
             })),
         }
     }
@@ -1363,10 +1366,14 @@ impl ApplicationLayerHandler {
     }
 
     /// Process a reject PDU
-    fn process_reject(&mut self, invoke_id: u8, _reject_reason: u8) -> Result<Option<Apdu>> {
+    fn process_reject(
+        &mut self,
+        invoke_id: u8,
+        reject_reason: RejectReason,
+    ) -> Result<Option<Apdu>> {
         self.stats.rejects += 1;
         self.transaction_manager
-            .reject_transaction(invoke_id, _reject_reason);
+            .reject_transaction(invoke_id, reject_reason);
         Ok(None)
     }
 
@@ -1476,7 +1483,7 @@ impl TransactionManager {
     }
 
     /// Mark transaction as rejected
-    pub fn reject_transaction(&mut self, invoke_id: u8, _reject_reason: u8) {
+    pub fn reject_transaction(&mut self, invoke_id: u8, _reject_reason: RejectReason) {
         if let Some(transaction) = self
             .transactions
             .iter_mut()

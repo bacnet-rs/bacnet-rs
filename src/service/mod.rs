@@ -345,9 +345,9 @@ impl TryFrom<u8> for UnconfirmedServiceChoice {
     }
 }
 
-/// Reject reason codes
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RejectReason {
+generate_custom_enum!(
+    /// Reject reason codes
+    RejectReason{
     Other = 0,
     BufferOverflow = 1,
     InconsistentParameters = 2,
@@ -358,7 +358,8 @@ pub enum RejectReason {
     TooManyArguments = 7,
     UndefinedEnumeration = 8,
     UnrecognizedService = 9,
-}
+    InvalidDataEncoding = 10,
+}, u8, 64..=255);
 
 /// Abort reason codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,7 +380,7 @@ use crate::encoding::{
 use crate::object::{
     ObjectError, ObjectIdentifier, PropertyIdentifier, PropertyValue, Segmentation,
 };
-use crate::EncodingError;
+use crate::{generate_custom_enum, EncodingError};
 
 /// Special array index value indicating all elements
 pub const BACNET_ARRAY_ALL: u32 = 0xFFFFFFFF;
