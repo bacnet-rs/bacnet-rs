@@ -694,17 +694,21 @@ pub mod file;
 /// Multi-state object types (MSI, MSO, MSV)
 pub mod multistate;
 
+pub mod event_state;
 pub mod object_type;
+pub mod reliability;
 pub use object_type::ObjectType;
 pub mod property_identifier;
 pub use property_identifier::PropertyIdentifier;
 
-pub use analog::{AnalogInput, AnalogOutput, AnalogValue, EventState, Reliability};
+pub use analog::{AnalogInput, AnalogOutput, AnalogValue};
 pub use binary::{BinaryInput, BinaryOutput, BinaryPV, BinaryValue, Polarity};
 pub use device::{DeviceObject, ObjectFunctions};
 pub use engineering_units::EngineeringUnits;
+pub use event_state::EventState;
 pub use file::{File, FileAccessMethod};
 pub use multistate::{MultiStateInput, MultiStateOutput, MultiStateValue};
+pub use reliability::Reliability;
 
 #[cfg(feature = "std")]
 pub use database::{DatabaseBuilder, DatabaseStatistics, ObjectDatabase};

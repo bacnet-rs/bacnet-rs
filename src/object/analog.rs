@@ -4,8 +4,9 @@
 //! as defined in ASHRAE 135. These objects represent analog (continuous) values in BACnet.
 
 use crate::object::{
-    engineering_units::EngineeringUnits, BacnetObject, ObjectError, ObjectIdentifier, ObjectType,
-    PropertyIdentifier, PropertyValue, Result,
+    engineering_units::EngineeringUnits, event_state::EventState, reliability::Reliability,
+    BacnetObject, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue,
+    Result,
 };
 
 #[cfg(not(feature = "std"))]
@@ -108,35 +109,6 @@ pub struct AnalogValue {
     pub relinquish_default: f32,
     /// COV increment
     pub cov_increment: Option<f32>,
-}
-
-/// Event state enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum EventState {
-    Normal = 0,
-    Fault = 1,
-    Offnormal = 2,
-    HighLimit = 3,
-    LowLimit = 4,
-    LifeSafetyAlarm = 5,
-}
-
-/// Reliability enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum Reliability {
-    NoFaultDetected = 0,
-    NoSensor = 1,
-    OverRange = 2,
-    UnderRange = 3,
-    OpenLoop = 4,
-    ShortedLoop = 5,
-    NoOutput = 6,
-    UnreliableOther = 7,
-    ProcessError = 8,
-    MultiStateFault = 9,
-    ConfigurationError = 10,
 }
 
 // EngineeringUnits enum moved to src/object/engineering_units.rs for complete implementation

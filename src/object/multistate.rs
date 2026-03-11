@@ -4,8 +4,8 @@
 //! object types as defined in ASHRAE 135. These objects represent multi-position values.
 
 use crate::object::{
-    BacnetObject, EventState, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier,
-    PropertyValue, Reliability, Result,
+    event_state::EventState, reliability::Reliability, BacnetObject, ObjectError, ObjectIdentifier,
+    ObjectType, PropertyIdentifier, PropertyValue, Result,
 };
 
 #[cfg(not(feature = "std"))]
