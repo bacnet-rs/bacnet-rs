@@ -4,12 +4,15 @@
 //! as defined in ASHRAE 135. These objects represent binary (two-state) values in BACnet.
 
 use crate::object::{
-    BacnetObject, EventState, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier,
-    PropertyValue, Reliability, Result,
+    event_state::EventState, reliability::Reliability, BacnetObject, ObjectError, ObjectIdentifier,
+    ObjectType, PropertyIdentifier, PropertyValue, Result,
 };
 
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// Binary values enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,11 +39,26 @@ impl From<BinaryPV> for bool {
 }
 
 /// Polarity enumeration
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum Polarity {
     Normal = 0,
     Reverse = 1,
+}
+
+impl TryFrom<u32> for Polarity {
+    type Error = ObjectError;
+
+    fn try_from(value: u32) -> Result<Self> {
+        match value {
+            0 => Ok(Polarity::Normal),
+            1 => Ok(Polarity::Reverse),
+            _ => Err(ObjectError::InvalidValue(
+                "Polarity must be 0 or 1".to_string(),
+            )),
+        }
+    }
 }
 
 /// Binary Input object
