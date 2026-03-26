@@ -148,11 +148,15 @@ pub enum EngineeringUnits {
     DegreesCelsius = 62,
     DegreesFahrenheit = 64,
     DegreesKelvin = 63,
+    Milliamperes = 2,
+    Amperes = 3,
+    Ohms = 4,
     Volts = 5,
     Millivolts = 124,
-    Amperes = 2,
-    Milliamperes = 119,
-    Ohms = 4,
+    WattsPerSquareMeter = 35,
+    Lumens = 36,
+    Luxes = 37,
+    FootCandles = 38,
     Watts = 47,
     Kilowatts = 48,
     Pascals = 53,
@@ -160,7 +164,36 @@ pub enum EngineeringUnits {
     MetersPerSecond = 74,
     KilometersPerHour = 75,
     CubicMetersPerSecond = 85,
-    LitersPerSecond = 126,
+    LitersPerSecond = 87,
+}
+
+impl core::fmt::Display for EngineeringUnits {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            EngineeringUnits::NoUnits => write!(f, "no-units"),
+            EngineeringUnits::Percent => write!(f, "%"),
+            EngineeringUnits::DegreesCelsius => write!(f, "\u{00B0}C"),
+            EngineeringUnits::DegreesFahrenheit => write!(f, "\u{00B0}F"),
+            EngineeringUnits::DegreesKelvin => write!(f, "K"),
+            EngineeringUnits::Milliamperes => write!(f, "mA"),
+            EngineeringUnits::Amperes => write!(f, "A"),
+            EngineeringUnits::Ohms => write!(f, "\u{03A9}"),
+            EngineeringUnits::Volts => write!(f, "V"),
+            EngineeringUnits::Millivolts => write!(f, "mV"),
+            EngineeringUnits::WattsPerSquareMeter => write!(f, "W/m\u{00B2}"),
+            EngineeringUnits::Lumens => write!(f, "lm"),
+            EngineeringUnits::Luxes => write!(f, "lx"),
+            EngineeringUnits::FootCandles => write!(f, "fc"),
+            EngineeringUnits::Watts => write!(f, "W"),
+            EngineeringUnits::Kilowatts => write!(f, "kW"),
+            EngineeringUnits::Pascals => write!(f, "Pa"),
+            EngineeringUnits::Kilopascals => write!(f, "kPa"),
+            EngineeringUnits::MetersPerSecond => write!(f, "m/s"),
+            EngineeringUnits::KilometersPerHour => write!(f, "km/h"),
+            EngineeringUnits::CubicMetersPerSecond => write!(f, "m\u{00B3}/s"),
+            EngineeringUnits::LitersPerSecond => write!(f, "L/s"),
+        }
+    }
 }
 
 impl AnalogInput {
