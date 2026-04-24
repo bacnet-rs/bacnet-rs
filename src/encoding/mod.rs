@@ -1429,19 +1429,15 @@ pub mod advanced {
                     pos += consumed;
 
                     match tag {
-                        ApplicationTag::CharacterString => {
-                            if length > self.max_string_length {
-                                return Err(EncodingError::InvalidFormat(
-                                    "String too long".to_string(),
-                                ));
-                            }
+                        ApplicationTag::CharacterString if length > self.max_string_length => {
+                            return Err(EncodingError::InvalidFormat(
+                                "String too long".to_string(),
+                            ));
                         }
-                        ApplicationTag::OctetString => {
-                            if length > self.max_string_length * 2 {
-                                return Err(EncodingError::InvalidFormat(
-                                    "Octet string too long".to_string(),
-                                ));
-                            }
+                        ApplicationTag::OctetString if length > self.max_string_length * 2 => {
+                            return Err(EncodingError::InvalidFormat(
+                                "Octet string too long".to_string(),
+                            ));
                         }
                         _ => {}
                     }
@@ -1987,7 +1983,7 @@ impl EncodingAnalyzer {
             .iter()
             .map(|p| (&p.error_type, p.count))
             .collect();
-        errors.sort_by(|a, b| b.1.cmp(&a.1));
+        errors.sort_by_key(|b| std::cmp::Reverse(b.1));
         errors.truncate(limit);
         errors
     }

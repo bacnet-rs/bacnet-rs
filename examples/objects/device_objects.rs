@@ -1106,36 +1106,36 @@ fn parse_rpm_response(
             .object_identifier
             .object_type
         {
-            ObjectType::AnalogInput | ObjectType::AnalogOutput | ObjectType::AnalogValue => {
-                if pos < data.len() && data[pos] == 0x44 {
-                    // Real value tag
-                    if let Some((value, consumed)) = extract_present_value(
-                        &data[pos..],
-                        objects_info[current_obj_index]
-                            .object_identifier
-                            .object_type,
-                    ) {
-                        // Debug: comment out for clean output
-                        // println!("Debug: Extracted present value: '{}'", value);
-                        objects_info[current_obj_index].present_value = Some(value);
-                        pos += consumed;
-                    }
+            ObjectType::AnalogInput | ObjectType::AnalogOutput | ObjectType::AnalogValue
+                if pos < data.len() && data[pos] == 0x44 =>
+            {
+                // Real value tag
+                if let Some((value, consumed)) = extract_present_value(
+                    &data[pos..],
+                    objects_info[current_obj_index]
+                        .object_identifier
+                        .object_type,
+                ) {
+                    // Debug: comment out for clean output
+                    // println!("Debug: Extracted present value: '{}'", value);
+                    objects_info[current_obj_index].present_value = Some(value);
+                    pos += consumed;
                 }
             }
-            ObjectType::BinaryInput | ObjectType::BinaryOutput | ObjectType::BinaryValue => {
-                if pos < data.len() && data[pos] == 0x11 {
-                    // Boolean value tag
-                    if let Some((value, consumed)) = extract_present_value(
-                        &data[pos..],
-                        objects_info[current_obj_index]
-                            .object_identifier
-                            .object_type,
-                    ) {
-                        // Debug: comment out for clean output
-                        // println!("Debug: Extracted present value: '{}'", value);
-                        objects_info[current_obj_index].present_value = Some(value);
-                        pos += consumed;
-                    }
+            ObjectType::BinaryInput | ObjectType::BinaryOutput | ObjectType::BinaryValue
+                if pos < data.len() && data[pos] == 0x11 =>
+            {
+                // Boolean value tag
+                if let Some((value, consumed)) = extract_present_value(
+                    &data[pos..],
+                    objects_info[current_obj_index]
+                        .object_identifier
+                        .object_type,
+                ) {
+                    // Debug: comment out for clean output
+                    // println!("Debug: Extracted present value: '{}'", value);
+                    objects_info[current_obj_index].present_value = Some(value);
+                    pos += consumed;
                 }
             }
             _ => {}

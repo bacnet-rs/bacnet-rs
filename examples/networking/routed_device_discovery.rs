@@ -575,29 +575,25 @@ fn read_property(
 
                             if resp_invoke_id == (invoke_id & 0x0F) {
                                 match pdu_type {
-                                    0x3 => {
+                                    0x3 if apdu_data.len() >= 2 && apdu_data[1] == 0x0C => {
                                         // PDU_TYPE_COMPLEX_ACK
                                         // Complex ACK format: [PDU_TYPE+invoke_id] [service_choice] [service_data...]
-                                        if apdu_data.len() >= 2 && apdu_data[1] == 0x0C {
-                                            // SERVICE_CONFIRMED_READ_PROPERTY
-                                            // Parse ReadProperty-ACK service data starting at byte 2
-                                            if let Ok(response) =
-                                                ReadPropertyResponse::decode(&apdu_data[2..])
+                                        // SERVICE_CONFIRMED_READ_PROPERTY
+                                        // Parse ReadProperty-ACK service data starting at byte 2
+                                        if let Ok(response) =
+                                            ReadPropertyResponse::decode(&apdu_data[2..])
+                                        {
+                                            let value = response.property_values.first();
+                                            if let Some(PropertyValue::CharacterString(value)) =
+                                                value
                                             {
-                                                let value = response.property_values.first();
-                                                if let Some(PropertyValue::CharacterString(value)) =
-                                                    value
-                                                {
-                                                    return Ok(value.clone());
-                                                } else {
-                                                    return Err("No CharacterString value".into());
-                                                }
+                                                return Ok(value.clone());
                                             } else {
-                                                // Try manual parsing if decode fails
-                                                return parse_read_property_ack_manual(
-                                                    &apdu_data[2..],
-                                                );
+                                                return Err("No CharacterString value".into());
                                             }
+                                        } else {
+                                            // Try manual parsing if decode fails
+                                            return parse_read_property_ack_manual(&apdu_data[2..]);
                                         }
                                     }
                                     0x5 => {
