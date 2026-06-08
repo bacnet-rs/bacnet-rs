@@ -65,6 +65,17 @@ impl BacnetClient {
         })
     }
 
+    /// Create a new BACnet client with specific ephemeral port
+    pub fn new_with_local_port(port: u16) -> Result<Self, Box<dyn std::error::Error>> {
+        let socket = UdpSocket::bind(format!("0.0.0.0:{}", port))?;
+        socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+
+        Ok(Self {
+            socket,
+            timeout: Duration::from_secs(5),
+        })
+    }
+
     /// Discover a device by IP address
     pub fn discover_device(
         &self,
