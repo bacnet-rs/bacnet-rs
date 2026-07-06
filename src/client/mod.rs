@@ -455,6 +455,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::BackupFailureTimeout,
                     )); // Backup_Failure_Timeout
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::BackupPreparationTime,
+                    )); // Backup_Preparation_Time
                 }
 
                 // Add properties to device and network port objects
