@@ -447,6 +447,9 @@ impl BacnetClient {
                     property_refs
                         .push(PropertyReference::new(PropertyIdentifier::DatabaseRevision));
                     // Database_Revision
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::ConfigurationFiles,
+                    )); // Configuration_Files
                 }
 
                 // Add properties to device and network port objects
