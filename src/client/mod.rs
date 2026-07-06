@@ -462,8 +462,8 @@ impl BacnetClient {
                         PropertyIdentifier::RestorePreparationTime,
                     )); // Restore_Preparation_Time
                     property_refs.push(PropertyReference::new(
-                        PropertyIdentifier::RestoreCompletionTime,
-                    )); // Restore_Completion_Time
+                        PropertyIdentifier::BackupAndRestoreState,
+                    )); // Backup_And_Restore_State
                 }
 
                 // Add properties to device and network port objects
