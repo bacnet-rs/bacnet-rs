@@ -441,6 +441,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::TimeSynchronizationRecipients,
                     )); // Time_Synchronization_Recipients
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::DeviceAddressBinding,
+                    )); // Device_Address_Binding
                 }
 
                 // Add properties to device and network port objects
