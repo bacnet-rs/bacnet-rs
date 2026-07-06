@@ -443,13 +443,15 @@ impl BacnetClient {
                     )); // Time_Synchronization_Recipients
                 }
 
-                // Add Max_Manager to device and network port objects
+                // Add properties to device and network port objects
                 if matches!(
                     obj.object_type,
                     ObjectType::Device | ObjectType::NetworkPort
                 ) {
                     property_refs.push(PropertyReference::new(PropertyIdentifier::MaxManager));
                     // Max_Master in 2020 specs (prob Max_Manager in 2024 specs)
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::MaxInfoFrames));
+                    // Max_Info_Frames
                 }
 
                 // Add Present_Value for input/output/value objects
