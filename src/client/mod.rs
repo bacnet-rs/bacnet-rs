@@ -412,6 +412,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::SegmentationSupported,
                     )); // Segmentation_Supported
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::MaxSegmentsAccepted,
+                    )); // Max_Segments_Accepted
                 }
 
                 // Add Present_Value for input/output/value objects
