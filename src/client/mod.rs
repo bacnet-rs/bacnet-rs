@@ -495,6 +495,15 @@ impl BacnetClient {
                     // Max_Info_Frames
                 }
 
+                // Add Align_Intervals property to device/trend_log/trend_log_multiple objects
+                if matches!(
+                    obj.object_type,
+                    ObjectType::Device | ObjectType::TrendLog | ObjectType::TrendLogMultiple
+                ) {
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::AlignIntervals));
+                    // Align_Intervals
+                }
+
                 // Add Present_Value for input/output/value objects
                 match obj.object_type {
                     ObjectType::AnalogInput
