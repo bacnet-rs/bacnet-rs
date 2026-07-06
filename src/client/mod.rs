@@ -368,7 +368,7 @@ impl BacnetClient {
 
                 // Always read basic properties
                 property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectName)); // Object_Name
-                property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectType)); // Object Type
+                property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectType)); // Object_Type
                 property_refs.push(PropertyReference::new(PropertyIdentifier::Description)); // Description
 
                 // Add Present_Value for input/output/value objects
