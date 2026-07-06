@@ -485,6 +485,7 @@ impl BacnetClient {
                     )); // Time_Synchronization_Interval
                     property_refs.push(PropertyReference::new(PropertyIdentifier::SerialNumber));
                     // Serial_Number
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::StatusFlags));
                 }
 
                 // Add properties to device and network port objects
@@ -509,6 +510,66 @@ impl BacnetClient {
                     // Interval_Offset
                 }
 
+                // Add Status_Flags property to applicable objects
+                match obj.object_type {
+                    ObjectType::AnalogInput
+                    | ObjectType::AnalogOutput
+                    | ObjectType::AnalogValue
+                    | ObjectType::Averaging
+                    | ObjectType::BinaryInput
+                    | ObjectType::BinaryOutput
+                    | ObjectType::BinaryValue
+                    | ObjectType::Command
+                    | ObjectType::Device
+                    | ObjectType::EventEnrollment
+                    | ObjectType::LifeSafetyPoint
+                    | ObjectType::LifeSafetyZone
+                    | ObjectType::Loop
+                    | ObjectType::MultiStateInput
+                    | ObjectType::MultiStateOutput
+                    | ObjectType::MultiStateValue
+                    | ObjectType::NotificationClass
+                    | ObjectType::Program
+                    | ObjectType::PulseConverter
+                    | ObjectType::Schedule
+                    | ObjectType::TrendLog
+                    | ObjectType::AccessDoor
+                    | ObjectType::EventLog
+                    | ObjectType::LoadControl
+                    | ObjectType::TrendLogMultiple
+                    | ObjectType::AccessPoint
+                    | ObjectType::AccessZone
+                    | ObjectType::AccessUser
+                    | ObjectType::AccessRights
+                    | ObjectType::AccessCredential
+                    | ObjectType::CredentialDataInput
+                    | ObjectType::CharacterstringValue
+                    | ObjectType::DatetimeValue
+                    | ObjectType::LargeAnalogValue
+                    | ObjectType::BitstringValue
+                    | ObjectType::OctetstringValue
+                    | ObjectType::DateValue
+                    | ObjectType::DatetimepatternValue
+                    | ObjectType::TimepatternValue
+                    | ObjectType::DatepatternValue
+                    | ObjectType::NotificationForwarder
+                    | ObjectType::Channel
+                    | ObjectType::LightingOutput
+                    | ObjectType::BinaryLightingOutput
+                    | ObjectType::NetworkPort
+                    | ObjectType::Timer
+                    | ObjectType::Lift
+                    | ObjectType::Escalator
+                    | ObjectType::Accumulator
+                    | ObjectType::Staging
+                    | ObjectType::AuditReporter
+                    | ObjectType::AuditLog => {
+                        property_refs.push(PropertyReference::new(PropertyIdentifier::StatusFlags));
+                        // Status_Flags
+                    }
+                    _ => {}
+                }
+
                 // Add Present_Value for input/output/value objects
                 match obj.object_type {
                     ObjectType::AnalogInput
@@ -521,9 +582,8 @@ impl BacnetClient {
                     | ObjectType::MultiStateOutput
                     | ObjectType::MultiStateValue => {
                         property_refs
-                            .push(PropertyReference::new(PropertyIdentifier::PresentValue)); // Present_Value
-                        property_refs.push(PropertyReference::new(PropertyIdentifier::StatusFlags));
-                        // Status_Flags
+                            .push(PropertyReference::new(PropertyIdentifier::PresentValue));
+                        // Present_Value
                     }
                     _ => {}
                 }
