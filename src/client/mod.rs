@@ -367,6 +367,7 @@ impl BacnetClient {
                 let mut property_refs = Vec::new();
 
                 // Always read basic properties
+                property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectIdentifier)); // Object_Identifier
                 property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectName)); // Object_Name
                 property_refs.push(PropertyReference::new(PropertyIdentifier::Description)); // Description
 
