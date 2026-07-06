@@ -403,6 +403,9 @@ impl BacnetClient {
                     )); // Protocol_Object_Types_Supported
                     property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectList));
                     // Object_List
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::StructuredObjectList,
+                    )); // Structured_Object_List
                 }
 
                 // Add Present_Value for input/output/value objects
