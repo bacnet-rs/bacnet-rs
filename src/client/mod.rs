@@ -495,13 +495,15 @@ impl BacnetClient {
                     // Max_Info_Frames
                 }
 
-                // Add Align_Intervals property to device/trend_log/trend_log_multiple objects
+                // Add properties to device/trend_log/trend_log_multiple objects
                 if matches!(
                     obj.object_type,
                     ObjectType::Device | ObjectType::TrendLog | ObjectType::TrendLogMultiple
                 ) {
                     property_refs.push(PropertyReference::new(PropertyIdentifier::AlignIntervals));
                     // Align_Intervals
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::IntervalOffset));
+                    // Interval_Offset
                 }
 
                 // Add Present_Value for input/output/value objects
