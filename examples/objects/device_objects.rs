@@ -772,28 +772,29 @@ fn read_objects_properties(
             // Always try to read these basic properties
             property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectName));
             property_refs.push(PropertyReference::new(PropertyIdentifier::Description));
+
             // Add Present_Value for input/output/value objects
-            match obj.object_type {
+            if matches!(
+                obj.object_type,
                 ObjectType::AnalogInput
-                | ObjectType::AnalogOutput
-                | ObjectType::AnalogValue
-                | ObjectType::BinaryInput
-                | ObjectType::BinaryOutput
-                | ObjectType::BinaryValue
-                | ObjectType::MultiStateInput
-                | ObjectType::MultiStateOutput
-                | ObjectType::MultiStateValue => {
-                    property_refs.push(PropertyReference::new(PropertyIdentifier::PresentValue));
-                }
-                _ => {}
+                    | ObjectType::AnalogOutput
+                    | ObjectType::AnalogValue
+                    | ObjectType::BinaryInput
+                    | ObjectType::BinaryOutput
+                    | ObjectType::BinaryValue
+                    | ObjectType::MultiStateInput
+                    | ObjectType::MultiStateOutput
+                    | ObjectType::MultiStateValue
+            ) {
+                property_refs.push(PropertyReference::new(PropertyIdentifier::PresentValue));
             }
 
             // Add Units for analog objects
-            match obj.object_type {
-                ObjectType::AnalogInput | ObjectType::AnalogOutput | ObjectType::AnalogValue => {
-                    property_refs.push(PropertyReference::new(PropertyIdentifier::Units));
-                }
-                _ => {}
+            if matches!(
+                obj.object_type,
+                ObjectType::AnalogInput | ObjectType::AnalogOutput | ObjectType::AnalogValue
+            ) {
+                property_refs.push(PropertyReference::new(PropertyIdentifier::Units));
             }
 
             read_specs.push(ReadAccessSpecification::new(*obj, property_refs));

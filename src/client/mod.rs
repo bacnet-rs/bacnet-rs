@@ -370,33 +370,29 @@ impl BacnetClient {
                 property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectName)); // Object_Name
                 property_refs.push(PropertyReference::new(PropertyIdentifier::Description)); // Description
 
-                // Add Present_Value for input/output/value objects
-                match obj.object_type {
+                // Add Present_Value and StatusFlags for input/output/value objects
+                if matches!(
+                    obj.object_type,
                     ObjectType::AnalogInput
-                    | ObjectType::AnalogOutput
-                    | ObjectType::AnalogValue
-                    | ObjectType::BinaryInput
-                    | ObjectType::BinaryOutput
-                    | ObjectType::BinaryValue
-                    | ObjectType::MultiStateInput
-                    | ObjectType::MultiStateOutput
-                    | ObjectType::MultiStateValue => {
-                        property_refs
-                            .push(PropertyReference::new(PropertyIdentifier::PresentValue)); // Present_Value
-                        property_refs.push(PropertyReference::new(PropertyIdentifier::StatusFlags));
-                        // Status_Flags
-                    }
-                    _ => {}
+                        | ObjectType::AnalogOutput
+                        | ObjectType::AnalogValue
+                        | ObjectType::BinaryInput
+                        | ObjectType::BinaryOutput
+                        | ObjectType::BinaryValue
+                        | ObjectType::MultiStateInput
+                        | ObjectType::MultiStateOutput
+                        | ObjectType::MultiStateValue
+                ) {
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::PresentValue)); // Present_Value
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::StatusFlags));
                 }
 
                 // Add Units for analog objects
-                match obj.object_type {
-                    ObjectType::AnalogInput
-                    | ObjectType::AnalogOutput
-                    | ObjectType::AnalogValue => {
-                        property_refs.push(PropertyReference::new(PropertyIdentifier::Units));
-                    }
-                    _ => {}
+                if matches!(
+                    obj.object_type,
+                    ObjectType::AnalogInput | ObjectType::AnalogOutput | ObjectType::AnalogValue
+                ) {
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::Units));
                 }
 
                 read_specs.push(ReadAccessSpecification::new(*obj, property_refs));
