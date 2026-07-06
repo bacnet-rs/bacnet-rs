@@ -370,6 +370,7 @@ impl BacnetClient {
                     PropertyReference::new(PropertyIdentifier::ObjectName),       // Object_Name
                     PropertyReference::new(PropertyIdentifier::ObjectType),       // Object_Type
                     PropertyReference::new(PropertyIdentifier::Description),      // Description
+                    PropertyReference::new(PropertyIdentifier::PropertyList),     // Property_List
                 ];
 
                 // Add properties for device object
