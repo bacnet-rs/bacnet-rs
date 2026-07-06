@@ -423,6 +423,8 @@ impl BacnetClient {
                     // Active_VT_Sessions
                     property_refs.push(PropertyReference::new(PropertyIdentifier::LocalTime));
                     // Local_Time
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::LocalDate));
+                    // Local_Date
                 }
 
                 // Add Present_Value for input/output/value objects
