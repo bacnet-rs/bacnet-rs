@@ -380,6 +380,8 @@ impl BacnetClient {
                     property_refs
                         .push(PropertyReference::new(PropertyIdentifier::VendorIdentifier));
                     // Vendor_Identifier
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::ModelName));
+                    // Model_Name
                 }
 
                 // Add Present_Value for input/output/value objects
