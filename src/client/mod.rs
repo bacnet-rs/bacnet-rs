@@ -377,6 +377,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(PropertyIdentifier::SystemStatus)); // System_Status
                     property_refs.push(PropertyReference::new(PropertyIdentifier::VendorName));
                     // Vendor_Name
+                    property_refs
+                        .push(PropertyReference::new(PropertyIdentifier::VendorIdentifier));
+                    // Vendor_Identifier
                 }
 
                 // Add Present_Value for input/output/value objects
