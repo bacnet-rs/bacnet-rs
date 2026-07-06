@@ -415,6 +415,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::MaxSegmentsAccepted,
                     )); // Max_Segments_Accepted
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::VtClassesSupported,
+                    )); // VT_Classes_Supported
                 }
 
                 // Add Present_Value for input/output/value objects
