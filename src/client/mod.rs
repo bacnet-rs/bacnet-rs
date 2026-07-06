@@ -418,6 +418,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::VtClassesSupported,
                     )); // VT_Classes_Supported
+                    property_refs
+                        .push(PropertyReference::new(PropertyIdentifier::ActiveVtSessions));
+                    // Active_VT_Sessions
                 }
 
                 // Add Present_Value for input/output/value objects
