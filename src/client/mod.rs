@@ -370,6 +370,12 @@ impl BacnetClient {
                 property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectName)); // Object_Name
                 property_refs.push(PropertyReference::new(PropertyIdentifier::Description)); // Description
 
+                // Add System_Status for device objects
+                if matches!(obj.object_type, ObjectType::Device) {
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::SystemStatus));
+                    // System_Status
+                }
+
                 // Add Present_Value for input/output/value objects
                 match obj.object_type {
                     ObjectType::AnalogInput
