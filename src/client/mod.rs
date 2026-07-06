@@ -430,6 +430,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::DaylightSavingsStatus,
                     )); // Daylight_Savings_Status
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::ApduSegmentTimeout,
+                    )); // APDU_Segment_Timeout
                 }
 
                 // Add Present_Value for input/output/value objects
