@@ -435,6 +435,9 @@ impl BacnetClient {
                     )); // APDU_Segment_Timeout
                     property_refs.push(PropertyReference::new(PropertyIdentifier::ApduTimeout));
                     // APDU_Timeout
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::NumberOfApduRetries,
+                    )); // Number_Of_APDU_Retries
                 }
 
                 // Add Present_Value for input/output/value objects
