@@ -392,6 +392,9 @@ impl BacnetClient {
                     // Location
                     property_refs.push(PropertyReference::new(PropertyIdentifier::ProtocolVersion));
                     // Protocol_Version
+                    property_refs
+                        .push(PropertyReference::new(PropertyIdentifier::ProtocolRevision));
+                    // Protocol_Revision
                 }
 
                 // Add Present_Value for input/output/value objects
