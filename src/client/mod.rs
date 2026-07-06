@@ -395,6 +395,9 @@ impl BacnetClient {
                     property_refs
                         .push(PropertyReference::new(PropertyIdentifier::ProtocolRevision));
                     // Protocol_Revision
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::ProtocolServicesSupported,
+                    )); // Protocol_Services_Supported
                 }
 
                 // Add Present_Value for input/output/value objects
