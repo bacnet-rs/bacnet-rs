@@ -482,6 +482,8 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::TimeSynchronizationInterval,
                     )); // Time_Synchronization_Interval
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::SerialNumber));
+                    // Serial_Number
                 }
 
                 // Add properties to device and network port objects
