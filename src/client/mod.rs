@@ -390,6 +390,8 @@ impl BacnetClient {
                     )); // Application_Software_Version
                     property_refs.push(PropertyReference::new(PropertyIdentifier::Location));
                     // Location
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::ProtocolVersion));
+                    // Protocol_Version
                 }
 
                 // Add Present_Value for input/output/value objects
