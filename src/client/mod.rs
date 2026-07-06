@@ -438,6 +438,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::NumberOfApduRetries,
                     )); // Number_Of_APDU_Retries
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::TimeSynchronizationRecipients,
+                    )); // Time_Synchronization_Recipients
                 }
 
                 // Add Present_Value for input/output/value objects
