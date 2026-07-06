@@ -364,8 +364,8 @@ impl BacnetClient {
             let mut read_specs = Vec::new();
 
             for obj in chunk {
+                // Always read basic properties
                 let mut property_refs = vec![
-                    // Always read basic properties
                     PropertyReference::new(PropertyIdentifier::ObjectIdentifier), // Object identifier
                     PropertyReference::new(PropertyIdentifier::ObjectName),       // Object_Name
                     PropertyReference::new(PropertyIdentifier::ObjectType),       // Object_Type
