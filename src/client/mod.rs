@@ -401,6 +401,8 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::ProtocolObjectTypesSupported,
                     )); // Protocol_Object_Types_Supported
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectList));
+                    // Object_List
                 }
 
                 // Add Present_Value for input/output/value objects
