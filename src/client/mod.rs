@@ -450,6 +450,8 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::ConfigurationFiles,
                     )); // Configuration_Files
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::LastRestoreTime));
+                    // Last_Restore_Time
                 }
 
                 // Add properties to device and network port objects
