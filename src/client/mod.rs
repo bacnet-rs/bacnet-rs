@@ -485,7 +485,58 @@ impl BacnetClient {
                     )); // Time_Synchronization_Interval
                     property_refs.push(PropertyReference::new(PropertyIdentifier::SerialNumber));
                     // Serial_Number
-                    property_refs.push(PropertyReference::new(PropertyIdentifier::StatusFlags));
+                }
+
+                if matches!(
+                    obj.object_type,
+                    ObjectType::Device
+                        | ObjectType::EventEnrollment
+                        | ObjectType::LifeSafetyPoint
+                        | ObjectType::LifeSafetyZone
+                        | ObjectType::Loop
+                        | ObjectType::MultiStateInput
+                        | ObjectType::MultiStateOutput
+                        | ObjectType::MultiStateValue
+                        | ObjectType::NotificationClass
+                        | ObjectType::Program
+                        | ObjectType::PulseConverter
+                        | ObjectType::Schedule
+                        | ObjectType::TrendLog
+                        | ObjectType::AccessDoor
+                        | ObjectType::EventLog
+                        | ObjectType::LoadControl
+                        | ObjectType::TrendLogMultiple
+                        | ObjectType::AccessPoint
+                        | ObjectType::AccessZone
+                        | ObjectType::CredentialDataInput
+                        | ObjectType::CharacterstringValue
+                        | ObjectType::DatetimeValue
+                        | ObjectType::LargeAnalogValue
+                        | ObjectType::BitstringValue
+                        | ObjectType::OctetstringValue
+                        | ObjectType::TimeValue
+                        | ObjectType::IntegerValue
+                        | ObjectType::PositiveIntegerValue
+                        | ObjectType::DateValue
+                        | ObjectType::DatetimepatternValue
+                        | ObjectType::TimepatternValue
+                        | ObjectType::DatepatternValue
+                        | ObjectType::GlobalGroup
+                        | ObjectType::AlertEnrollment
+                        | ObjectType::Channel
+                        | ObjectType::LightingOutput
+                        | ObjectType::BinaryLightingOutput
+                        | ObjectType::NetworkPort
+                        | ObjectType::Timer
+                        | ObjectType::Lift
+                        | ObjectType::Escalator
+                        | ObjectType::Accumulator
+                        | ObjectType::Staging
+                        | ObjectType::AuditReporter
+                        | ObjectType::AuditLog
+                ) {
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::EventState));
+                    // Event_State
                 }
 
                 // Add properties to device and network port objects
