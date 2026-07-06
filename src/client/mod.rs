@@ -476,6 +476,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::RestartNotificationRecipients,
                     )); // Restart_Notification_Recipients
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::UtcTimeSynchronizationRecipients,
+                    )); // UTC_Time_Synchronization_Recipients
                 }
 
                 // Add properties to device and network port objects
