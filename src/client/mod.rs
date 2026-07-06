@@ -372,7 +372,7 @@ impl BacnetClient {
                     PropertyReference::new(PropertyIdentifier::Description),      // Description
                 ];
 
-                // Add Vendor_Name for device object
+                // Add properties for device object
                 if matches!(obj.object_type, ObjectType::Device) {
                     property_refs.push(PropertyReference::new(PropertyIdentifier::SystemStatus)); // System_Status
                     property_refs.push(PropertyReference::new(PropertyIdentifier::VendorName));
@@ -441,6 +441,15 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::TimeSynchronizationRecipients,
                     )); // Time_Synchronization_Recipients
+                }
+
+                // Add Max_Manager to device and network port objects
+                if matches!(
+                    obj.object_type,
+                    ObjectType::Device | ObjectType::NetworkPort
+                ) {
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::MaxManager));
+                    // Max_Master in 2020 specs (prob Max_Manager in 2024 specs)
                 }
 
                 // Add Present_Value for input/output/value objects
