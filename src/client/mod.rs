@@ -452,6 +452,9 @@ impl BacnetClient {
                     )); // Configuration_Files
                     property_refs.push(PropertyReference::new(PropertyIdentifier::LastRestoreTime));
                     // Last_Restore_Time
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::BackupFailureTimeout,
+                    )); // Backup_Failure_Timeout
                 }
 
                 // Add properties to device and network port objects
