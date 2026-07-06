@@ -406,6 +406,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::StructuredObjectList,
                     )); // Structured_Object_List
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::MaxApduLengthAccepted,
+                    )); // Max_APDU_Length_Accepted
                 }
 
                 // Add Present_Value for input/output/value objects
