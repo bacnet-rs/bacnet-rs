@@ -470,6 +470,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::LastRestartReason,
                     )); // Last_Restart_Reason
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::TimeOfDeviceRestart,
+                    )); // Time_Of_Device_Restart
                 }
 
                 // Add properties to device and network port objects
