@@ -372,6 +372,7 @@ impl BacnetClient {
 
                 // Add Vendor_Name for device object
                 if matches!(obj.object_type, ObjectType::Device) {
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::SystemStatus)); // System_Status
                     property_refs.push(PropertyReference::new(PropertyIdentifier::VendorName));
                     // Vendor_Name
                 }
