@@ -425,6 +425,8 @@ impl BacnetClient {
                     // Local_Time
                     property_refs.push(PropertyReference::new(PropertyIdentifier::LocalDate));
                     // Local_Date
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::UtcOffset));
+                    // UTC_Offset
                 }
 
                 // Add Present_Value for input/output/value objects
