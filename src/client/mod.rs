@@ -464,6 +464,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::BackupAndRestoreState,
                     )); // Backup_And_Restore_State
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::ActiveCovSubscriptions,
+                    )); // Active_COV_Subscriptions
                 }
 
                 // Add properties to device and network port objects
