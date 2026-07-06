@@ -382,6 +382,9 @@ impl BacnetClient {
                     // Vendor_Identifier
                     property_refs.push(PropertyReference::new(PropertyIdentifier::ModelName));
                     // Model_Name
+                    property_refs
+                        .push(PropertyReference::new(PropertyIdentifier::FirmwareRevision));
+                    // Firmware_Revision
                 }
 
                 // Add Present_Value for input/output/value objects
