@@ -385,6 +385,9 @@ impl BacnetClient {
                     property_refs
                         .push(PropertyReference::new(PropertyIdentifier::FirmwareRevision));
                     // Firmware_Revision
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::ApplicationSoftwareVersion,
+                    )); // Application_Software_Version
                 }
 
                 // Add Present_Value for input/output/value objects
