@@ -409,6 +409,9 @@ impl BacnetClient {
                     property_refs.push(PropertyReference::new(
                         PropertyIdentifier::MaxApduLengthAccepted,
                     )); // Max_APDU_Length_Accepted
+                    property_refs.push(PropertyReference::new(
+                        PropertyIdentifier::SegmentationSupported,
+                    )); // Segmentation_Supported
                 }
 
                 // Add Present_Value for input/output/value objects
