@@ -364,12 +364,13 @@ impl BacnetClient {
             let mut read_specs = Vec::new();
 
             for obj in chunk {
-                let mut property_refs = Vec::new();
-
-                // Always read basic properties
-                property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectIdentifier)); // Object identifier
-                property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectName)); // Object_Name
-                property_refs.push(PropertyReference::new(PropertyIdentifier::Description)); // Description
+                let mut property_refs = vec![
+                    // Always read basic properties
+                    PropertyReference::new(PropertyIdentifier::ObjectIdentifier), // Object identifier
+                    PropertyReference::new(PropertyIdentifier::ObjectName),       // Object_Name
+                    PropertyReference::new(PropertyIdentifier::ObjectType),       // Object_Type
+                    PropertyReference::new(PropertyIdentifier::Description),      // Description
+                ];
 
                 // Add Vendor_Name for device object
                 if matches!(obj.object_type, ObjectType::Device) {
