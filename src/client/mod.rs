@@ -366,264 +366,74 @@ impl BacnetClient {
             let mut read_specs = Vec::new();
 
             for obj in chunk {
-                let mut pr = PropertyReferenceVector::new();
-                if matches!(obj.object_type, ObjectType::Device) {
-                    pr.push(PropertyIdentifier::SystemStatus);
-                    pr.push(PropertyIdentifier::VendorName);
-                    pr.push(PropertyIdentifier::VendorIdentifier);
-                    pr.push(PropertyIdentifier::ModelName);
-                    pr.push(PropertyIdentifier::FirmwareRevision);
-                    pr.push(PropertyIdentifier::ApplicationSoftwareVersion);
-                    pr.push(PropertyIdentifier::Location);
-                    pr.push(PropertyIdentifier::ProtocolVersion);
-                    pr.push(PropertyIdentifier::ProtocolRevision);
-                    pr.push(PropertyIdentifier::ProtocolServicesSupported);
-                    pr.push(PropertyIdentifier::ProtocolObjectTypesSupported);
-                    pr.push(PropertyIdentifier::ObjectList);
-                    pr.push(PropertyIdentifier::StructuredObjectList);
-                    pr.push(PropertyIdentifier::MaxApduLengthAccepted);
-                    pr.push(PropertyIdentifier::SegmentationSupported);
-                    pr.push(PropertyIdentifier::MaxSegmentsAccepted);
-                    pr.push(PropertyIdentifier::VtClassesSupported);
-                    pr.push(PropertyIdentifier::ActiveVtSessions);
-                    pr.push(PropertyIdentifier::LocalTime);
-                    pr.push(PropertyIdentifier::LocalDate);
-                    pr.push(PropertyIdentifier::UtcOffset);
-                    pr.push(PropertyIdentifier::DaylightSavingsStatus);
-                    pr.push(PropertyIdentifier::ApduSegmentTimeout);
-                    pr.push(PropertyIdentifier::ApduTimeout);
-                    pr.push(PropertyIdentifier::NumberOfApduRetries);
-                    pr.push(PropertyIdentifier::TimeSynchronizationRecipients);
-                    pr.push(PropertyIdentifier::DeviceAddressBinding);
-                    pr.push(PropertyIdentifier::DatabaseRevision);
-                    pr.push(PropertyIdentifier::ConfigurationFiles);
-                    pr.push(PropertyIdentifier::LastRestoreTime);
-                    pr.push(PropertyIdentifier::BackupFailureTimeout);
-                    pr.push(PropertyIdentifier::BackupPreparationTime);
-                    pr.push(PropertyIdentifier::RestorePreparationTime);
-                    pr.push(PropertyIdentifier::BackupAndRestoreState);
-                    pr.push(PropertyIdentifier::ActiveCovSubscriptions);
-                    pr.push(PropertyIdentifier::LastRestartReason);
-                    pr.push(PropertyIdentifier::TimeOfDeviceRestart);
-                    pr.push(PropertyIdentifier::RestartNotificationRecipients);
-                    pr.push(PropertyIdentifier::UtcTimeSynchronizationRecipients);
-                    pr.push(PropertyIdentifier::TimeSynchronizationInterval);
-                    pr.push(PropertyIdentifier::SerialNumber);
-                }
-
-                if matches!(
-                    obj.object_type,
-                    ObjectType::Device
-                        | ObjectType::EventEnrollment
-                        | ObjectType::LifeSafetyPoint
-                        | ObjectType::LifeSafetyZone
-                        | ObjectType::Loop
-                        | ObjectType::MultiStateInput
-                        | ObjectType::MultiStateOutput
-                        | ObjectType::MultiStateValue
-                        | ObjectType::NotificationClass
-                        | ObjectType::Program
-                        | ObjectType::PulseConverter
-                        | ObjectType::Schedule
-                        | ObjectType::TrendLog
-                        | ObjectType::AccessDoor
-                        | ObjectType::EventLog
-                        | ObjectType::LoadControl
-                        | ObjectType::TrendLogMultiple
-                        | ObjectType::AccessPoint
-                        | ObjectType::AccessZone
-                        | ObjectType::CredentialDataInput
-                        | ObjectType::CharacterstringValue
-                        | ObjectType::DatetimeValue
-                        | ObjectType::LargeAnalogValue
-                        | ObjectType::BitstringValue
-                        | ObjectType::OctetstringValue
-                        | ObjectType::TimeValue
-                        | ObjectType::IntegerValue
-                        | ObjectType::PositiveIntegerValue
-                        | ObjectType::DateValue
-                        | ObjectType::DatetimepatternValue
-                        | ObjectType::TimepatternValue
-                        | ObjectType::DatepatternValue
-                        | ObjectType::GlobalGroup
-                        | ObjectType::AlertEnrollment
-                        | ObjectType::Channel
-                        | ObjectType::LightingOutput
-                        | ObjectType::BinaryLightingOutput
-                        | ObjectType::NetworkPort
-                        | ObjectType::Timer
-                        | ObjectType::Lift
-                        | ObjectType::Escalator
-                        | ObjectType::Accumulator
-                        | ObjectType::Staging
-                        | ObjectType::AuditReporter
-                        | ObjectType::AuditLog
-                ) {
-                    pr.push(PropertyIdentifier::EventState);
-                }
-
-                if matches!(
-                    obj.object_type,
-                    ObjectType::Device | ObjectType::NetworkPort
-                ) {
-                    pr.push(PropertyIdentifier::MaxManager);
-                    pr.push(PropertyIdentifier::MaxInfoFrames);
-                }
-
-                if matches!(
-                    obj.object_type,
-                    ObjectType::Device | ObjectType::TrendLog | ObjectType::TrendLogMultiple
-                ) {
-                    pr.push(PropertyIdentifier::AlignIntervals);
-                    pr.push(PropertyIdentifier::IntervalOffset);
-                }
-
-                if matches!(
-                    obj.object_type,
-                    ObjectType::AnalogInput
-                        | ObjectType::AnalogOutput
-                        | ObjectType::AnalogValue
-                        | ObjectType::BinaryInput
-                        | ObjectType::BinaryOutput
-                        | ObjectType::BinaryValue
-                        | ObjectType::Command
-                        | ObjectType::Device
-                        | ObjectType::EventEnrollment
-                        | ObjectType::LifeSafetyPoint
-                        | ObjectType::LifeSafetyZone
-                        | ObjectType::Loop
-                        | ObjectType::MultiStateInput
-                        | ObjectType::MultiStateOutput
-                        | ObjectType::MultiStateValue
-                        | ObjectType::NotificationClass
-                        | ObjectType::Program
-                        | ObjectType::PulseConverter
-                        | ObjectType::Schedule
-                        | ObjectType::TrendLog
-                        | ObjectType::AccessDoor
-                        | ObjectType::EventLog
-                        | ObjectType::LoadControl
-                        | ObjectType::TrendLogMultiple
-                        | ObjectType::AccessPoint
-                        | ObjectType::AccessZone
-                        | ObjectType::AccessUser
-                        | ObjectType::AccessRights
-                        | ObjectType::AccessCredential
-                        | ObjectType::CredentialDataInput
-                        | ObjectType::CharacterstringValue
-                        | ObjectType::DatetimeValue
-                        | ObjectType::LargeAnalogValue
-                        | ObjectType::BitstringValue
-                        | ObjectType::OctetstringValue
-                        | ObjectType::TimeValue
-                        | ObjectType::IntegerValue
-                        | ObjectType::PositiveIntegerValue
-                        | ObjectType::DateValue
-                        | ObjectType::DatetimepatternValue
-                        | ObjectType::TimepatternValue
-                        | ObjectType::DatepatternValue
-                        | ObjectType::GlobalGroup
-                        | ObjectType::NotificationForwarder
-                        | ObjectType::Channel
-                        | ObjectType::LightingOutput
-                        | ObjectType::BinaryLightingOutput
-                        | ObjectType::NetworkPort
-                        | ObjectType::Timer
-                        | ObjectType::Lift
-                        | ObjectType::Escalator
-                        | ObjectType::Accumulator
-                        | ObjectType::Staging
-                        | ObjectType::AuditReporter
-                        | ObjectType::AuditLog
-                ) {
-                    pr.push(PropertyIdentifier::Reliability);
-                }
-
-                match obj.object_type {
-                    ObjectType::AnalogInput
-                    | ObjectType::AnalogOutput
-                    | ObjectType::AnalogValue
-                    | ObjectType::Averaging
-                    | ObjectType::BinaryInput
-                    | ObjectType::BinaryOutput
-                    | ObjectType::BinaryValue
-                    | ObjectType::Command
-                    | ObjectType::Device
-                    | ObjectType::EventEnrollment
-                    | ObjectType::LifeSafetyPoint
-                    | ObjectType::LifeSafetyZone
-                    | ObjectType::Loop
-                    | ObjectType::MultiStateInput
-                    | ObjectType::MultiStateOutput
-                    | ObjectType::MultiStateValue
-                    | ObjectType::NotificationClass
-                    | ObjectType::Program
-                    | ObjectType::PulseConverter
-                    | ObjectType::Schedule
-                    | ObjectType::TrendLog
-                    | ObjectType::AccessDoor
-                    | ObjectType::EventLog
-                    | ObjectType::LoadControl
-                    | ObjectType::TrendLogMultiple
-                    | ObjectType::AccessPoint
-                    | ObjectType::AccessZone
-                    | ObjectType::AccessUser
-                    | ObjectType::AccessRights
-                    | ObjectType::AccessCredential
-                    | ObjectType::CredentialDataInput
-                    | ObjectType::CharacterstringValue
-                    | ObjectType::DatetimeValue
-                    | ObjectType::LargeAnalogValue
-                    | ObjectType::BitstringValue
-                    | ObjectType::OctetstringValue
-                    | ObjectType::TimeValue
-                    | ObjectType::IntegerValue
-                    | ObjectType::PositiveIntegerValue
-                    | ObjectType::DateValue
-                    | ObjectType::DatetimepatternValue
-                    | ObjectType::TimepatternValue
-                    | ObjectType::DatepatternValue
-                    | ObjectType::GlobalGroup
-                    | ObjectType::NotificationForwarder
-                    | ObjectType::Channel
-                    | ObjectType::LightingOutput
-                    | ObjectType::BinaryLightingOutput
-                    | ObjectType::NetworkPort
-                    | ObjectType::Timer
-                    | ObjectType::Lift
-                    | ObjectType::Escalator
-                    | ObjectType::Accumulator
-                    | ObjectType::Staging
-                    | ObjectType::AuditReporter
-                    | ObjectType::AuditLog => {
-                        pr.push(PropertyIdentifier::StatusFlags);
-                    }
-                    _ => {}
-                }
-
-                match obj.object_type {
-                    ObjectType::AnalogInput
-                    | ObjectType::AnalogOutput
-                    | ObjectType::AnalogValue
-                    | ObjectType::BinaryInput
-                    | ObjectType::BinaryOutput
-                    | ObjectType::BinaryValue
-                    | ObjectType::MultiStateInput
-                    | ObjectType::MultiStateOutput
-                    | ObjectType::MultiStateValue => {
-                        pr.push(PropertyIdentifier::PresentValue);
-                    }
-                    _ => {}
-                }
-
-                match obj.object_type {
-                    ObjectType::AnalogInput
-                    | ObjectType::AnalogOutput
-                    | ObjectType::AnalogValue => {
-                        pr.push(PropertyIdentifier::Units);
-                    }
-                    _ => {}
-                }
+                let pr = match obj.object_type {
+                    ObjectType::AnalogInput => PropertyReferenceVector::analog_input(),
+                    ObjectType::AnalogOutput => todo!(),
+                    ObjectType::AnalogValue => todo!(),
+                    ObjectType::BinaryInput => todo!(),
+                    ObjectType::BinaryOutput => todo!(),
+                    ObjectType::BinaryValue => todo!(),
+                    ObjectType::Calendar => todo!(),
+                    ObjectType::Command => todo!(),
+                    ObjectType::Device => todo!(),
+                    ObjectType::EventEnrollment => todo!(),
+                    ObjectType::File => todo!(),
+                    ObjectType::Group => todo!(),
+                    ObjectType::Loop => todo!(),
+                    ObjectType::MultiStateInput => todo!(),
+                    ObjectType::MultiStateOutput => todo!(),
+                    ObjectType::NotificationClass => todo!(),
+                    ObjectType::Program => todo!(),
+                    ObjectType::Schedule => todo!(),
+                    ObjectType::Averaging => todo!(),
+                    ObjectType::MultiStateValue => todo!(),
+                    ObjectType::TrendLog => todo!(),
+                    ObjectType::LifeSafetyPoint => todo!(),
+                    ObjectType::LifeSafetyZone => todo!(),
+                    ObjectType::Accumulator => todo!(),
+                    ObjectType::PulseConverter => todo!(),
+                    ObjectType::EventLog => todo!(),
+                    ObjectType::GlobalGroup => todo!(),
+                    ObjectType::TrendLogMultiple => todo!(),
+                    ObjectType::LoadControl => todo!(),
+                    ObjectType::StructuredView => todo!(),
+                    ObjectType::AccessDoor => todo!(),
+                    ObjectType::Timer => todo!(),
+                    ObjectType::AccessCredential => todo!(),
+                    ObjectType::AccessPoint => todo!(),
+                    ObjectType::AccessRights => todo!(),
+                    ObjectType::AccessUser => todo!(),
+                    ObjectType::AccessZone => todo!(),
+                    ObjectType::CredentialDataInput => todo!(),
+                    ObjectType::BitstringValue => todo!(),
+                    ObjectType::CharacterstringValue => todo!(),
+                    ObjectType::DatepatternValue => todo!(),
+                    ObjectType::DateValue => todo!(),
+                    ObjectType::DatetimepatternValue => todo!(),
+                    ObjectType::DatetimeValue => todo!(),
+                    ObjectType::IntegerValue => todo!(),
+                    ObjectType::LargeAnalogValue => todo!(),
+                    ObjectType::OctetstringValue => todo!(),
+                    ObjectType::PositiveIntegerValue => todo!(),
+                    ObjectType::TimepatternValue => todo!(),
+                    ObjectType::TimeValue => todo!(),
+                    ObjectType::NotificationForwarder => todo!(),
+                    ObjectType::AlertEnrollment => todo!(),
+                    ObjectType::Channel => todo!(),
+                    ObjectType::LightingOutput => todo!(),
+                    ObjectType::BinaryLightingOutput => todo!(),
+                    ObjectType::NetworkPort => todo!(),
+                    ObjectType::ElevatorGroup => todo!(),
+                    ObjectType::Escalator => todo!(),
+                    ObjectType::Lift => todo!(),
+                    ObjectType::Staging => todo!(),
+                    ObjectType::AuditLog => todo!(),
+                    ObjectType::AuditReporter => todo!(),
+                    ObjectType::Color => todo!(),
+                    ObjectType::ColorTemperature => todo!(),
+                    ObjectType::Custom(object_type_value) => todo!(),
+                    ObjectType::Reserved(object_type_value) => todo!(),
+                };
 
                 read_specs.push(ReadAccessSpecification::new(*obj, pr.vec));
             }
@@ -1096,6 +906,7 @@ impl BacnetClient {
     }
 }
 
+// adds all the applicable properties for the given object
 struct PropertyReferenceVector {
     vec: Vec<PropertyReference>,
 }
@@ -1114,6 +925,55 @@ impl PropertyReferenceVector {
     }
     fn push(&mut self, id: PropertyIdentifier) {
         self.vec.push(PropertyReference::new(id));
+    }
+
+    fn analog_input() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::PresentValue),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::DeviceType),
+                PropertyReference::new(PropertyIdentifier::StatusFlags),
+                PropertyReference::new(PropertyIdentifier::EventState),
+                PropertyReference::new(PropertyIdentifier::Reliability),
+                PropertyReference::new(PropertyIdentifier::OutOfService),
+                PropertyReference::new(PropertyIdentifier::UpdateInterval),
+                PropertyReference::new(PropertyIdentifier::Units),
+                PropertyReference::new(PropertyIdentifier::MinPresValue),
+                PropertyReference::new(PropertyIdentifier::MaxPresValue),
+                PropertyReference::new(PropertyIdentifier::Resolution),
+                PropertyReference::new(PropertyIdentifier::CovIncrement),
+                PropertyReference::new(PropertyIdentifier::TimeDelay),
+                PropertyReference::new(PropertyIdentifier::NotificationClass),
+                PropertyReference::new(PropertyIdentifier::HighLimit),
+                PropertyReference::new(PropertyIdentifier::LowLimit),
+                PropertyReference::new(PropertyIdentifier::Deadband),
+                PropertyReference::new(PropertyIdentifier::LimitEnable),
+                PropertyReference::new(PropertyIdentifier::EventEnable),
+                PropertyReference::new(PropertyIdentifier::AckedTransitions),
+                PropertyReference::new(PropertyIdentifier::NotifyType),
+                PropertyReference::new(PropertyIdentifier::EventTimeStamps),
+                PropertyReference::new(PropertyIdentifier::EventMessageTexts),
+                PropertyReference::new(PropertyIdentifier::EventMessageTextsConfig),
+                PropertyReference::new(PropertyIdentifier::EventDetectionEnable),
+                PropertyReference::new(PropertyIdentifier::EventAlgorithmInhibitRef),
+                PropertyReference::new(PropertyIdentifier::EventAlgorithmInhibit),
+                PropertyReference::new(PropertyIdentifier::TimeDelayNormal),
+                PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::InterfaceValue),
+                PropertyReference::new(PropertyIdentifier::FaultHighLimit),
+                PropertyReference::new(PropertyIdentifier::FaultLowLimit),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
     }
 }
 
