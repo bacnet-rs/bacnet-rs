@@ -373,7 +373,7 @@ impl BacnetClient {
                     ObjectType::BinaryInput => PropertyReferenceVector::binary_input(),
                     ObjectType::BinaryOutput => PropertyReferenceVector::binary_output(),
                     ObjectType::BinaryValue => PropertyReferenceVector::binary_value(),
-                    ObjectType::Calendar => todo!(),
+                    ObjectType::Calendar => PropertyReferenceVector::calendar(),
                     ObjectType::Command => todo!(),
                     ObjectType::Device => todo!(),
                     ObjectType::EventEnrollment => todo!(),
@@ -1245,6 +1245,25 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::AuditLevel),
                 PropertyReference::new(PropertyIdentifier::AuditableOperations),
                 PropertyReference::new(PropertyIdentifier::AuditPriorityFilter),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn calendar() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::PresentValue),
+                PropertyReference::new(PropertyIdentifier::DateList),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
                 PropertyReference::new(PropertyIdentifier::Tags),
                 PropertyReference::new(PropertyIdentifier::ProfileLocation),
                 PropertyReference::new(PropertyIdentifier::ProfileName),
