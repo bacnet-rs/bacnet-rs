@@ -21,6 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Bind an ephemeral local port; devices reply unicast to it.
     let client = BacnetClient::builder()
+        .port(0xBAC0)
         .timeout(Duration::from_secs(3))
         .build()?;
     println!("Listening on {}\n", client.local_addr()?);
@@ -34,6 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "192.168.1.255:47808",
         "192.168.0.255:47808",
         "172.16.0.255:47808",
+        "172.25.250.255:47808",
     ];
 
     let mut devices: BTreeMap<u32, DeviceInfo> = BTreeMap::new();
