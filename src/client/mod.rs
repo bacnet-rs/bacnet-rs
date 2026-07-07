@@ -435,7 +435,7 @@ impl BacnetClient {
                         PropertyReferenceVector::binary_lighting_output()
                     }
                     ObjectType::NetworkPort => PropertyReferenceVector::network_port(),
-                    ObjectType::ElevatorGroup => todo!(),
+                    ObjectType::ElevatorGroup => PropertyReferenceVector::elevator_group(),
                     ObjectType::Escalator => todo!(),
                     ObjectType::Lift => todo!(),
                     ObjectType::Staging => todo!(),
@@ -3314,6 +3314,29 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::EventAlgorithmInhibitRef),
                 PropertyReference::new(PropertyIdentifier::EventAlgorithmInhibit),
                 PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn elevator_group() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::MachineRoomId),
+                PropertyReference::new(PropertyIdentifier::GroupId),
+                PropertyReference::new(PropertyIdentifier::GroupMembers),
+                PropertyReference::new(PropertyIdentifier::GroupMode),
+                PropertyReference::new(PropertyIdentifier::LandingCalls),
+                PropertyReference::new(PropertyIdentifier::LandingCallControl),
                 PropertyReference::new(PropertyIdentifier::PropertyList),
                 PropertyReference::new(PropertyIdentifier::AuditLevel),
                 PropertyReference::new(PropertyIdentifier::AuditableOperations),
