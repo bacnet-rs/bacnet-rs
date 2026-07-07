@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 #[cfg(not(feature = "std"))]
 use alloc::{collections::BTreeMap as HashMap, string::String, vec::Vec};
 
+#[cfg(feature = "std")]
+use crate::object::AnalogInput;
 use crate::{
     app::{Apdu, MaxApduSize, MaxSegments},
     datalink::bip::BACNET_IP_PORT,
@@ -561,6 +563,68 @@ impl BacnetClient {
                     // Interval_Offset
                 }
 
+                if matches!(
+                    obj.object_type,
+                    ObjectType::AnalogInput
+                        | ObjectType::AnalogOutput
+                        | ObjectType::AnalogValue
+                        | ObjectType::BinaryInput
+                        | ObjectType::BinaryOutput
+                        | ObjectType::BinaryValue
+                        | ObjectType::Command
+                        | ObjectType::Device
+                        | ObjectType::EventEnrollment
+                        | ObjectType::LifeSafetyPoint
+                        | ObjectType::LifeSafetyZone
+                        | ObjectType::Loop
+                        | ObjectType::MultiStateInput
+                        | ObjectType::MultiStateOutput
+                        | ObjectType::MultiStateValue
+                        | ObjectType::NotificationClass
+                        | ObjectType::Program
+                        | ObjectType::PulseConverter
+                        | ObjectType::Schedule
+                        | ObjectType::TrendLog
+                        | ObjectType::AccessDoor
+                        | ObjectType::EventLog
+                        | ObjectType::LoadControl
+                        | ObjectType::TrendLogMultiple
+                        | ObjectType::AccessPoint
+                        | ObjectType::AccessZone
+                        | ObjectType::AccessUser
+                        | ObjectType::AccessRights
+                        | ObjectType::AccessCredential
+                        | ObjectType::CredentialDataInput
+                        | ObjectType::CharacterstringValue
+                        | ObjectType::DatetimeValue
+                        | ObjectType::LargeAnalogValue
+                        | ObjectType::BitstringValue
+                        | ObjectType::OctetstringValue
+                        | ObjectType::TimeValue
+                        | ObjectType::IntegerValue
+                        | ObjectType::PositiveIntegerValue
+                        | ObjectType::DateValue
+                        | ObjectType::DatetimepatternValue
+                        | ObjectType::TimepatternValue
+                        | ObjectType::DatepatternValue
+                        | ObjectType::GlobalGroup
+                        | ObjectType::NotificationForwarder
+                        | ObjectType::Channel
+                        | ObjectType::LightingOutput
+                        | ObjectType::BinaryLightingOutput
+                        | ObjectType::NetworkPort
+                        | ObjectType::Timer
+                        | ObjectType::Lift
+                        | ObjectType::Escalator
+                        | ObjectType::Accumulator
+                        | ObjectType::Staging
+                        | ObjectType::AuditReporter
+                        | ObjectType::AuditLog
+                ) {
+                    property_refs.push(PropertyReference::new(PropertyIdentifier::Reliability));
+                    // Reliability
+                }
+
                 // Add Status_Flags property to applicable objects
                 match obj.object_type {
                     ObjectType::AnalogInput
@@ -599,10 +663,14 @@ impl BacnetClient {
                     | ObjectType::LargeAnalogValue
                     | ObjectType::BitstringValue
                     | ObjectType::OctetstringValue
+                    | ObjectType::TimeValue
+                    | ObjectType::IntegerValue
+                    | ObjectType::PositiveIntegerValue
                     | ObjectType::DateValue
                     | ObjectType::DatetimepatternValue
                     | ObjectType::TimepatternValue
                     | ObjectType::DatepatternValue
+                    | ObjectType::GlobalGroup
                     | ObjectType::NotificationForwarder
                     | ObjectType::Channel
                     | ObjectType::LightingOutput
