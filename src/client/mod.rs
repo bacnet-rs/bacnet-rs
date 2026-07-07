@@ -425,7 +425,9 @@ impl BacnetClient {
                     }
                     ObjectType::TimepatternValue => PropertyReferenceVector::time_pattern_value(),
                     ObjectType::TimeValue => PropertyReferenceVector::time_value(),
-                    ObjectType::NotificationForwarder => todo!(),
+                    ObjectType::NotificationForwarder => {
+                        PropertyReferenceVector::notification_forwarder()
+                    }
                     ObjectType::AlertEnrollment => todo!(),
                     ObjectType::Channel => todo!(),
                     ObjectType::LightingOutput => todo!(),
@@ -2979,6 +2981,32 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::TimeDelayNormal),
                 PropertyReference::new(PropertyIdentifier::CovuPeriod),
                 PropertyReference::new(PropertyIdentifier::CovuRecipients),
+                PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn notification_forwarder() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::StatusFlags),
+                PropertyReference::new(PropertyIdentifier::Reliability),
+                PropertyReference::new(PropertyIdentifier::OutOfService),
+                PropertyReference::new(PropertyIdentifier::RecipientList),
+                PropertyReference::new(PropertyIdentifier::SubscribedRecipients),
+                PropertyReference::new(PropertyIdentifier::ProcessIdentifierFilter),
+                PropertyReference::new(PropertyIdentifier::PortFilter),
+                PropertyReference::new(PropertyIdentifier::LocalForwardingOnly),
                 PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
                 PropertyReference::new(PropertyIdentifier::PropertyList),
                 PropertyReference::new(PropertyIdentifier::AuditLevel),
