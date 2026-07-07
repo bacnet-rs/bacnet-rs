@@ -418,7 +418,9 @@ impl BacnetClient {
                     ObjectType::IntegerValue => PropertyReferenceVector::integer_value(),
                     ObjectType::LargeAnalogValue => PropertyReferenceVector::large_analog_value(),
                     ObjectType::OctetstringValue => PropertyReferenceVector::octet_string_value(),
-                    ObjectType::PositiveIntegerValue => todo!(),
+                    ObjectType::PositiveIntegerValue => {
+                        PropertyReferenceVector::positive_integer_value()
+                    }
                     ObjectType::TimepatternValue => todo!(),
                     ObjectType::TimeValue => PropertyReferenceVector::time_value(),
                     ObjectType::NotificationForwarder => todo!(),
@@ -2678,6 +2680,60 @@ impl PropertyReferenceVector {
     }
 
     fn integer_value() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::PresentValue),
+                PropertyReference::new(PropertyIdentifier::StatusFlags),
+                PropertyReference::new(PropertyIdentifier::EventState),
+                PropertyReference::new(PropertyIdentifier::Reliability),
+                PropertyReference::new(PropertyIdentifier::OutOfService),
+                PropertyReference::new(PropertyIdentifier::Units),
+                PropertyReference::new(PropertyIdentifier::PriorityArray),
+                PropertyReference::new(PropertyIdentifier::RelinquishDefault),
+                PropertyReference::new(PropertyIdentifier::CovIncrement),
+                PropertyReference::new(PropertyIdentifier::TimeDelay),
+                PropertyReference::new(PropertyIdentifier::NotificationClass),
+                PropertyReference::new(PropertyIdentifier::HighLimit),
+                PropertyReference::new(PropertyIdentifier::LowLimit),
+                PropertyReference::new(PropertyIdentifier::Deadband),
+                PropertyReference::new(PropertyIdentifier::LimitEnable),
+                PropertyReference::new(PropertyIdentifier::EventEnable),
+                PropertyReference::new(PropertyIdentifier::AckedTransitions),
+                PropertyReference::new(PropertyIdentifier::NotifyType),
+                PropertyReference::new(PropertyIdentifier::EventTimeStamps),
+                PropertyReference::new(PropertyIdentifier::EventMessageTexts),
+                PropertyReference::new(PropertyIdentifier::EventMessageTextsConfig),
+                PropertyReference::new(PropertyIdentifier::EventDetectionEnable),
+                PropertyReference::new(PropertyIdentifier::EventAlgorithmInhibitRef),
+                PropertyReference::new(PropertyIdentifier::EventAlgorithmInhibit),
+                PropertyReference::new(PropertyIdentifier::TimeDelayNormal),
+                PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
+                PropertyReference::new(PropertyIdentifier::MinPresValue),
+                PropertyReference::new(PropertyIdentifier::MaxPresValue),
+                PropertyReference::new(PropertyIdentifier::Resolution),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::FaultHighLimit),
+                PropertyReference::new(PropertyIdentifier::FaultLowLimit),
+                PropertyReference::new(PropertyIdentifier::CurrentCommandPriority),
+                PropertyReference::new(PropertyIdentifier::ValueSource),
+                PropertyReference::new(PropertyIdentifier::ValueSourceArray),
+                PropertyReference::new(PropertyIdentifier::LastCommandTime),
+                PropertyReference::new(PropertyIdentifier::CommandTimeArray),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::AuditPriorityFilter),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn positive_integer_value() -> Self {
         Self {
             vec: vec![
                 PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
