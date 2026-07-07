@@ -401,7 +401,7 @@ impl BacnetClient {
                     ObjectType::Timer => todo!(),
                     ObjectType::AccessCredential => todo!(),
                     ObjectType::AccessPoint => PropertyReferenceVector::access_point(),
-                    ObjectType::AccessRights => todo!(),
+                    ObjectType::AccessRights => PropertyReferenceVector::access_rights(),
                     ObjectType::AccessUser => PropertyReferenceVector::access_user(),
                     ObjectType::AccessZone => PropertyReferenceVector::access_zone(),
                     ObjectType::CredentialDataInput => todo!(),
@@ -2309,6 +2309,31 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::Members),
                 PropertyReference::new(PropertyIdentifier::MemberOf),
                 PropertyReference::new(PropertyIdentifier::Credentials),
+                PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn access_rights() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::GlobalIdentifier),
+                PropertyReference::new(PropertyIdentifier::StatusFlags),
+                PropertyReference::new(PropertyIdentifier::Reliability),
+                PropertyReference::new(PropertyIdentifier::Enable),
+                PropertyReference::new(PropertyIdentifier::NegativeAccessRules),
+                PropertyReference::new(PropertyIdentifier::PositiveAccessRules),
+                PropertyReference::new(PropertyIdentifier::Accompaniment),
                 PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
                 PropertyReference::new(PropertyIdentifier::PropertyList),
                 PropertyReference::new(PropertyIdentifier::AuditLevel),
