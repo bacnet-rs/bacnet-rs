@@ -396,7 +396,7 @@ impl BacnetClient {
                     ObjectType::GlobalGroup => todo!(),
                     ObjectType::TrendLogMultiple => todo!(),
                     ObjectType::LoadControl => PropertyReferenceVector::load_control(),
-                    ObjectType::StructuredView => todo!(),
+                    ObjectType::StructuredView => PropertyReferenceVector::structured_view(),
                     ObjectType::AccessDoor => PropertyReferenceVector::access_door(),
                     ObjectType::Timer => todo!(),
                     ObjectType::AccessCredential => todo!(),
@@ -2095,6 +2095,32 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
                 PropertyReference::new(PropertyIdentifier::PropertyList),
                 PropertyReference::new(PropertyIdentifier::ValueSource),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn structured_view() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::NodeType),
+                PropertyReference::new(PropertyIdentifier::NodeSubtype),
+                PropertyReference::new(PropertyIdentifier::SubordinateList),
+                PropertyReference::new(PropertyIdentifier::SubordinateAnnotations),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::SubordinateTags),
+                PropertyReference::new(PropertyIdentifier::SubordinateNodeTypes),
+                PropertyReference::new(PropertyIdentifier::SubordinateRelationships),
+                PropertyReference::new(PropertyIdentifier::DefaultSubordinateRelationship),
+                PropertyReference::new(PropertyIdentifier::Represents),
                 PropertyReference::new(PropertyIdentifier::AuditLevel),
                 PropertyReference::new(PropertyIdentifier::AuditableOperations),
                 PropertyReference::new(PropertyIdentifier::Tags),
