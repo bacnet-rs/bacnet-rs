@@ -423,7 +423,7 @@ impl BacnetClient {
                     ObjectType::PositiveIntegerValue => {
                         PropertyReferenceVector::positive_integer_value()
                     }
-                    ObjectType::TimepatternValue => todo!(),
+                    ObjectType::TimepatternValue => PropertyReferenceVector::time_pattern_value(),
                     ObjectType::TimeValue => PropertyReferenceVector::time_value(),
                     ObjectType::NotificationForwarder => todo!(),
                     ObjectType::AlertEnrollment => todo!(),
@@ -2841,6 +2841,45 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::Reliability),
                 PropertyReference::new(PropertyIdentifier::OutOfService),
                 PropertyReference::new(PropertyIdentifier::IsUtc),
+                PropertyReference::new(PropertyIdentifier::PriorityArray),
+                PropertyReference::new(PropertyIdentifier::RelinquishDefault),
+                PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::EventDetectionEnable),
+                PropertyReference::new(PropertyIdentifier::NotificationClass),
+                PropertyReference::new(PropertyIdentifier::EventEnable),
+                PropertyReference::new(PropertyIdentifier::AckedTransitions),
+                PropertyReference::new(PropertyIdentifier::NotifyType),
+                PropertyReference::new(PropertyIdentifier::EventTimeStamps),
+                PropertyReference::new(PropertyIdentifier::EventMessageTexts),
+                PropertyReference::new(PropertyIdentifier::EventMessageTextsConfig),
+                PropertyReference::new(PropertyIdentifier::CurrentCommandPriority),
+                PropertyReference::new(PropertyIdentifier::ValueSource),
+                PropertyReference::new(PropertyIdentifier::ValueSourceArray),
+                PropertyReference::new(PropertyIdentifier::LastCommandTime),
+                PropertyReference::new(PropertyIdentifier::CommandTimeArray),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::AuditPriorityFilter),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn time_pattern_value() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::PresentValue),
+                PropertyReference::new(PropertyIdentifier::StatusFlags),
+                PropertyReference::new(PropertyIdentifier::EventState),
+                PropertyReference::new(PropertyIdentifier::Reliability),
+                PropertyReference::new(PropertyIdentifier::OutOfService),
                 PropertyReference::new(PropertyIdentifier::PriorityArray),
                 PropertyReference::new(PropertyIdentifier::RelinquishDefault),
                 PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
