@@ -385,7 +385,7 @@ impl BacnetClient {
                     ObjectType::NotificationClass => todo!(),
                     ObjectType::Program => todo!(),
                     ObjectType::Schedule => todo!(),
-                    ObjectType::Averaging => todo!(),
+                    ObjectType::Averaging => PropertyReferenceVector::averaging(),
                     ObjectType::MultiStateValue => todo!(),
                     ObjectType::TrendLog => todo!(),
                     ObjectType::LifeSafetyPoint => todo!(),
@@ -1062,6 +1062,34 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::AuditLevel),
                 PropertyReference::new(PropertyIdentifier::AuditableOperations),
                 PropertyReference::new(PropertyIdentifier::AuditPriorityFilter),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn averaging() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::MinimumValue),
+                PropertyReference::new(PropertyIdentifier::MinimumValueTimestamp),
+                PropertyReference::new(PropertyIdentifier::AverageValue),
+                PropertyReference::new(PropertyIdentifier::VarianceValue),
+                PropertyReference::new(PropertyIdentifier::MaximumValue),
+                PropertyReference::new(PropertyIdentifier::MaximumValueTimestamp),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::AttemptedSamples),
+                PropertyReference::new(PropertyIdentifier::ValidSamples),
+                PropertyReference::new(PropertyIdentifier::ObjectPropertyReference),
+                PropertyReference::new(PropertyIdentifier::WindowInterval),
+                PropertyReference::new(PropertyIdentifier::WindowSamples),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
                 PropertyReference::new(PropertyIdentifier::Tags),
                 PropertyReference::new(PropertyIdentifier::ProfileLocation),
                 PropertyReference::new(PropertyIdentifier::ProfileName),
