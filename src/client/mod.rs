@@ -378,7 +378,7 @@ impl BacnetClient {
                     ObjectType::Device => PropertyReferenceVector::device(),
                     ObjectType::EventEnrollment => PropertyReferenceVector::event_enrollment(),
                     ObjectType::File => PropertyReferenceVector::file(),
-                    ObjectType::Group => todo!(),
+                    ObjectType::Group => PropertyReferenceVector::group(),
                     ObjectType::Loop => todo!(),
                     ObjectType::MultiStateInput => todo!(),
                     ObjectType::MultiStateOutput => todo!(),
@@ -1435,6 +1435,25 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::ReadOnly),
                 PropertyReference::new(PropertyIdentifier::FileAccessMethod),
                 PropertyReference::new(PropertyIdentifier::RecordCount),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn group() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::ListOfGroupMembers),
+                PropertyReference::new(PropertyIdentifier::PresentValue),
                 PropertyReference::new(PropertyIdentifier::PropertyList),
                 PropertyReference::new(PropertyIdentifier::AuditLevel),
                 PropertyReference::new(PropertyIdentifier::AuditableOperations),
