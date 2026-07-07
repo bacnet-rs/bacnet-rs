@@ -366,67 +366,49 @@ impl BacnetClient {
             let mut read_specs = Vec::new();
 
             for obj in chunk {
-                // Always read basic properties
                 let mut pr = PropertyReferenceVector::new();
-                // Add properties for device object
                 if matches!(obj.object_type, ObjectType::Device) {
                     pr.push(PropertyIdentifier::SystemStatus);
                     pr.push(PropertyIdentifier::VendorName);
-                    // Vendor_Name
                     pr.push(PropertyIdentifier::VendorIdentifier);
-                    // Vendor_Identifier
                     pr.push(PropertyIdentifier::ModelName);
-                    // Model_Name
                     pr.push(PropertyIdentifier::FirmwareRevision);
-                    // Firmware_Revision
-                    pr.push(PropertyIdentifier::ApplicationSoftwareVersion); // Application_Software_Version
+                    pr.push(PropertyIdentifier::ApplicationSoftwareVersion);
                     pr.push(PropertyIdentifier::Location);
-                    // Location
                     pr.push(PropertyIdentifier::ProtocolVersion);
-                    // Protocol_Version
                     pr.push(PropertyIdentifier::ProtocolRevision);
-                    // Protocol_Revision
-                    pr.push(PropertyIdentifier::ProtocolServicesSupported); // Protocol_Services_Supported
-                    pr.push(PropertyIdentifier::ProtocolObjectTypesSupported); // Protocol_Object_Types_Supported
+                    pr.push(PropertyIdentifier::ProtocolServicesSupported);
+                    pr.push(PropertyIdentifier::ProtocolObjectTypesSupported);
                     pr.push(PropertyIdentifier::ObjectList);
-                    // Object_List
-                    pr.push(PropertyIdentifier::StructuredObjectList); // Structured_Object_List
-                    pr.push(PropertyIdentifier::MaxApduLengthAccepted); // Max_APDU_Length_Accepted
-                    pr.push(PropertyIdentifier::SegmentationSupported); // Segmentation_Supported
-                    pr.push(PropertyIdentifier::MaxSegmentsAccepted); // Max_Segments_Accepted
-                    pr.push(PropertyIdentifier::VtClassesSupported); // VT_Classes_Supported
+                    pr.push(PropertyIdentifier::StructuredObjectList);
+                    pr.push(PropertyIdentifier::MaxApduLengthAccepted);
+                    pr.push(PropertyIdentifier::SegmentationSupported);
+                    pr.push(PropertyIdentifier::MaxSegmentsAccepted);
+                    pr.push(PropertyIdentifier::VtClassesSupported);
                     pr.push(PropertyIdentifier::ActiveVtSessions);
-                    // Active_VT_Sessions
                     pr.push(PropertyIdentifier::LocalTime);
-                    // Local_Time
                     pr.push(PropertyIdentifier::LocalDate);
-                    // Local_Date
                     pr.push(PropertyIdentifier::UtcOffset);
-                    // UTC_Offset
-                    pr.push(PropertyIdentifier::DaylightSavingsStatus); // Daylight_Savings_Status
-                    pr.push(PropertyIdentifier::ApduSegmentTimeout); // APDU_Segment_Timeout
+                    pr.push(PropertyIdentifier::DaylightSavingsStatus);
+                    pr.push(PropertyIdentifier::ApduSegmentTimeout);
                     pr.push(PropertyIdentifier::ApduTimeout);
-                    // APDU_Timeout
-                    pr.push(PropertyIdentifier::NumberOfApduRetries); // Number_Of_APDU_Retries
-                    pr.push(PropertyIdentifier::TimeSynchronizationRecipients); // Time_Synchronization_Recipients
-                    pr.push(PropertyIdentifier::DeviceAddressBinding); // Device_Address_Binding
+                    pr.push(PropertyIdentifier::NumberOfApduRetries);
+                    pr.push(PropertyIdentifier::TimeSynchronizationRecipients);
+                    pr.push(PropertyIdentifier::DeviceAddressBinding);
                     pr.push(PropertyIdentifier::DatabaseRevision);
-                    // Database_Revision
-                    pr.push(PropertyIdentifier::ConfigurationFiles); // Configuration_Files
+                    pr.push(PropertyIdentifier::ConfigurationFiles);
                     pr.push(PropertyIdentifier::LastRestoreTime);
-                    // Last_Restore_Time
-                    pr.push(PropertyIdentifier::BackupFailureTimeout); // Backup_Failure_Timeout
-                    pr.push(PropertyIdentifier::BackupPreparationTime); // Backup_Preparation_Time
-                    pr.push(PropertyIdentifier::RestorePreparationTime); // Restore_Preparation_Time
-                    pr.push(PropertyIdentifier::BackupAndRestoreState); // Backup_And_Restore_State
-                    pr.push(PropertyIdentifier::ActiveCovSubscriptions); // Active_COV_Subscriptions
-                    pr.push(PropertyIdentifier::LastRestartReason); // Last_Restart_Reason
-                    pr.push(PropertyIdentifier::TimeOfDeviceRestart); // Time_Of_Device_Restart
-                    pr.push(PropertyIdentifier::RestartNotificationRecipients); // Restart_Notification_Recipients
-                    pr.push(PropertyIdentifier::UtcTimeSynchronizationRecipients); // UTC_Time_Synchronization_Recipients
-                    pr.push(PropertyIdentifier::TimeSynchronizationInterval); // Time_Synchronization_Interval
+                    pr.push(PropertyIdentifier::BackupFailureTimeout);
+                    pr.push(PropertyIdentifier::BackupPreparationTime);
+                    pr.push(PropertyIdentifier::RestorePreparationTime);
+                    pr.push(PropertyIdentifier::BackupAndRestoreState);
+                    pr.push(PropertyIdentifier::ActiveCovSubscriptions);
+                    pr.push(PropertyIdentifier::LastRestartReason);
+                    pr.push(PropertyIdentifier::TimeOfDeviceRestart);
+                    pr.push(PropertyIdentifier::RestartNotificationRecipients);
+                    pr.push(PropertyIdentifier::UtcTimeSynchronizationRecipients);
+                    pr.push(PropertyIdentifier::TimeSynchronizationInterval);
                     pr.push(PropertyIdentifier::SerialNumber);
-                    // Serial_Number
                 }
 
                 if matches!(
@@ -478,29 +460,22 @@ impl BacnetClient {
                         | ObjectType::AuditLog
                 ) {
                     pr.push(PropertyIdentifier::EventState);
-                    // Event_State
                 }
 
-                // Add properties to device and network port objects
                 if matches!(
                     obj.object_type,
                     ObjectType::Device | ObjectType::NetworkPort
                 ) {
                     pr.push(PropertyIdentifier::MaxManager);
-                    // Max_Master in 2020 specs (prob Max_Manager in 2024 specs)
                     pr.push(PropertyIdentifier::MaxInfoFrames);
-                    // Max_Info_Frames
                 }
 
-                // Add properties to device/trend_log/trend_log_multiple objects
                 if matches!(
                     obj.object_type,
                     ObjectType::Device | ObjectType::TrendLog | ObjectType::TrendLogMultiple
                 ) {
                     pr.push(PropertyIdentifier::AlignIntervals);
-                    // Align_Intervals
                     pr.push(PropertyIdentifier::IntervalOffset);
-                    // Interval_Offset
                 }
 
                 if matches!(
@@ -562,10 +537,8 @@ impl BacnetClient {
                         | ObjectType::AuditLog
                 ) {
                     pr.push(PropertyIdentifier::Reliability);
-                    // Reliability
                 }
 
-                // Add Status_Flags property to applicable objects
                 match obj.object_type {
                     ObjectType::AnalogInput
                     | ObjectType::AnalogOutput
@@ -624,12 +597,10 @@ impl BacnetClient {
                     | ObjectType::AuditReporter
                     | ObjectType::AuditLog => {
                         pr.push(PropertyIdentifier::StatusFlags);
-                        // Status_Flags
                     }
                     _ => {}
                 }
 
-                // Add Present_Value for input/output/value objects
                 match obj.object_type {
                     ObjectType::AnalogInput
                     | ObjectType::AnalogOutput
@@ -641,12 +612,10 @@ impl BacnetClient {
                     | ObjectType::MultiStateOutput
                     | ObjectType::MultiStateValue => {
                         pr.push(PropertyIdentifier::PresentValue);
-                        // Present_Value
                     }
                     _ => {}
                 }
 
-                // Add Units for analog objects
                 match obj.object_type {
                     ObjectType::AnalogInput
                     | ObjectType::AnalogOutput
