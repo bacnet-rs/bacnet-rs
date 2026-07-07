@@ -404,7 +404,9 @@ impl BacnetClient {
                     ObjectType::AccessRights => PropertyReferenceVector::access_rights(),
                     ObjectType::AccessUser => PropertyReferenceVector::access_user(),
                     ObjectType::AccessZone => PropertyReferenceVector::access_zone(),
-                    ObjectType::CredentialDataInput => todo!(),
+                    ObjectType::CredentialDataInput => {
+                        PropertyReferenceVector::credential_data_input()
+                    }
                     ObjectType::BitstringValue => todo!(),
                     ObjectType::CharacterstringValue => todo!(),
                     ObjectType::DatepatternValue => todo!(),
@@ -2373,6 +2375,40 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::ThreatAuthority),
                 PropertyReference::new(PropertyIdentifier::ExtendedTimeEnable),
                 PropertyReference::new(PropertyIdentifier::AuthorizationExemptions),
+                PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn credential_data_input() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::PresentValue),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::StatusFlags),
+                PropertyReference::new(PropertyIdentifier::Reliability),
+                PropertyReference::new(PropertyIdentifier::OutOfService),
+                PropertyReference::new(PropertyIdentifier::SupportedFormats),
+                PropertyReference::new(PropertyIdentifier::SupportedFormatClasses),
+                PropertyReference::new(PropertyIdentifier::UpdateTime),
+                PropertyReference::new(PropertyIdentifier::EventDetectionEnable),
+                PropertyReference::new(PropertyIdentifier::NotificationClass),
+                PropertyReference::new(PropertyIdentifier::EventEnable),
+                PropertyReference::new(PropertyIdentifier::EventState),
+                PropertyReference::new(PropertyIdentifier::AckedTransitions),
+                PropertyReference::new(PropertyIdentifier::NotifyType),
+                PropertyReference::new(PropertyIdentifier::EventTimeStamps),
+                PropertyReference::new(PropertyIdentifier::EventMessageTexts),
+                PropertyReference::new(PropertyIdentifier::EventMessageTextsConfig),
                 PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
                 PropertyReference::new(PropertyIdentifier::PropertyList),
                 PropertyReference::new(PropertyIdentifier::AuditLevel),
