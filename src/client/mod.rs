@@ -428,7 +428,7 @@ impl BacnetClient {
                     ObjectType::NotificationForwarder => {
                         PropertyReferenceVector::notification_forwarder()
                     }
-                    ObjectType::AlertEnrollment => todo!(),
+                    ObjectType::AlertEnrollment => PropertyReferenceVector::alert_enrollment(),
                     ObjectType::Channel => todo!(),
                     ObjectType::LightingOutput => todo!(),
                     ObjectType::BinaryLightingOutput => todo!(),
@@ -3008,6 +3008,35 @@ impl PropertyReferenceVector {
                 PropertyReference::new(PropertyIdentifier::PortFilter),
                 PropertyReference::new(PropertyIdentifier::LocalForwardingOnly),
                 PropertyReference::new(PropertyIdentifier::ReliabilityEvaluationInhibit),
+                PropertyReference::new(PropertyIdentifier::PropertyList),
+                PropertyReference::new(PropertyIdentifier::AuditLevel),
+                PropertyReference::new(PropertyIdentifier::AuditableOperations),
+                PropertyReference::new(PropertyIdentifier::Tags),
+                PropertyReference::new(PropertyIdentifier::ProfileLocation),
+                PropertyReference::new(PropertyIdentifier::ProfileName),
+            ],
+        }
+    }
+
+    fn alert_enrollment() -> Self {
+        Self {
+            vec: vec![
+                PropertyReference::new(PropertyIdentifier::ObjectIdentifier),
+                PropertyReference::new(PropertyIdentifier::ObjectName),
+                PropertyReference::new(PropertyIdentifier::ObjectType),
+                PropertyReference::new(PropertyIdentifier::Description),
+                PropertyReference::new(PropertyIdentifier::PresentValue),
+                PropertyReference::new(PropertyIdentifier::EventState),
+                PropertyReference::new(PropertyIdentifier::EventDetectionEnable),
+                PropertyReference::new(PropertyIdentifier::NotificationClass),
+                PropertyReference::new(PropertyIdentifier::EventEnable),
+                PropertyReference::new(PropertyIdentifier::AckedTransitions),
+                PropertyReference::new(PropertyIdentifier::NotifyType),
+                PropertyReference::new(PropertyIdentifier::EventTimeStamps),
+                PropertyReference::new(PropertyIdentifier::EventMessageTexts),
+                PropertyReference::new(PropertyIdentifier::EventMessageTextsConfig),
+                PropertyReference::new(PropertyIdentifier::EventAlgorithmInhibitRef),
+                PropertyReference::new(PropertyIdentifier::EventAlgorithmInhibit),
                 PropertyReference::new(PropertyIdentifier::PropertyList),
                 PropertyReference::new(PropertyIdentifier::AuditLevel),
                 PropertyReference::new(PropertyIdentifier::AuditableOperations),
