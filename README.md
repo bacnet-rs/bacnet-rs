@@ -92,8 +92,9 @@ cargo run --example read_write_property 10.161.1.211 analogValue 4 relinquish 8
 ```
 
 Lower-level examples (`routed_device_discovery` for network routing, and the
-device-side `responder_device`) drive the data-link or server layers directly for
-cases the client does not cover.
+device-side `hosted_device`) drive the data-link or server layers directly for
+cases the client does not cover. The `hosted_device` example documents the
+server's deliberately small implementation profile and current limitations.
 
 ## Contributing
 

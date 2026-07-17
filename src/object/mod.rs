@@ -162,6 +162,8 @@ pub enum ObjectError {
     PropertyIsNotArray,
     /// An array index was outside the property's bounds.
     InvalidArrayIndex,
+    /// The requested optional behavior is not implemented.
+    OptionalFunctionalityNotSupported,
     /// Invalid property type
     InvalidPropertyType,
     /// Invalid property value
@@ -183,6 +185,9 @@ impl fmt::Display for ObjectError {
             ObjectError::PropertyNotWritable => write!(f, "Property not writable"),
             ObjectError::PropertyIsNotArray => write!(f, "Property is not an array"),
             ObjectError::InvalidArrayIndex => write!(f, "Invalid array index"),
+            ObjectError::OptionalFunctionalityNotSupported => {
+                write!(f, "Optional functionality not supported")
+            }
             ObjectError::InvalidPropertyType => write!(f, "Invalid property type"),
             ObjectError::InvalidValue(msg) => write!(f, "Invalid value: {}", msg),
             ObjectError::WriteAccessDenied => write!(f, "Write access denied"),
@@ -271,6 +276,30 @@ pub trait BacnetObject: Send + Sync {
     fn property_list(&self) -> Vec<PropertyIdentifier>;
 }
 
+/// Update one slot in a BACnet command priority array and return the resulting
+/// effective value. Priority 1 is the highest; the relinquish default is used
+/// when every slot is null.
+pub(crate) fn write_priority_slot<T: Copy>(
+    priority_array: &mut [Option<T>; 16],
+    priority: u8,
+    value: Option<T>,
+    relinquish_default: T,
+) -> Result<T> {
+    if !(1..=16).contains(&priority) {
+        return Err(ObjectError::InvalidValue(
+            "Priority must be 1-16".to_string(),
+        ));
+    }
+
+    priority_array[usize::from(priority - 1)] = value;
+    Ok(priority_array
+        .iter()
+        .flatten()
+        .next()
+        .copied()
+        .unwrap_or(relinquish_default))
+}
+
 /// BACnet date representation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Date {
@@ -322,6 +351,10 @@ pub struct Device {
     pub max_apdu_length_accepted: u16,
     /// Segmentation support
     pub segmentation_supported: Segmentation,
+    /// APDU response timeout in milliseconds
+    pub apdu_timeout: u32,
+    /// Number of APDU retries
+    pub number_of_apdu_retries: u8,
     /// Device address binding (for routing)
     pub device_address_binding: Vec<AddressBinding>,
     /// Database revision
@@ -343,10 +376,12 @@ impl Device {
             application_software_version: String::from(env!("CARGO_PKG_VERSION")),
             protocol_version: 1,
             protocol_revision: 22, // Current BACnet protocol revision
-            protocol_services_supported: ProtocolServicesSupported::default(),
+            protocol_services_supported: ProtocolServicesSupported::hosted_object_services(),
             object_types_supported: vec![ObjectType::Device],
             max_apdu_length_accepted: 1476,
-            segmentation_supported: Segmentation::Both,
+            segmentation_supported: Segmentation::NoSegmentation,
+            apdu_timeout: 3_000,
+            number_of_apdu_retries: 3,
             device_address_binding: Vec::new(),
             database_revision: 1,
         }
@@ -442,11 +477,39 @@ impl BacnetObject for Device {
             PropertyIdentifier::ProtocolRevision => {
                 Ok(PropertyValue::Unsigned(self.protocol_revision.into()))
             }
+            PropertyIdentifier::ProtocolServicesSupported => Ok(PropertyValue::BitString(
+                self.protocol_services_supported
+                    .to_bool_vec_for_revision(self.protocol_revision),
+            )),
+            PropertyIdentifier::ProtocolObjectTypesSupported => {
+                Ok(PropertyValue::BitString(object_types_supported_bit_string(
+                    &self.object_types_supported,
+                    self.protocol_revision,
+                )))
+            }
             PropertyIdentifier::MaxApduLengthAccepted => Ok(PropertyValue::Unsigned(
                 self.max_apdu_length_accepted.into(),
             )),
             PropertyIdentifier::SegmentationSupported => Ok(PropertyValue::Enumerated(
                 self.segmentation_supported as u32,
+            )),
+            PropertyIdentifier::ApduTimeout => {
+                Ok(PropertyValue::Unsigned(self.apdu_timeout.into()))
+            }
+            PropertyIdentifier::NumberOfApduRetries => {
+                Ok(PropertyValue::Unsigned(self.number_of_apdu_retries.into()))
+            }
+            PropertyIdentifier::DeviceAddressBinding => Ok(PropertyValue::List(
+                self.device_address_binding
+                    .iter()
+                    .flat_map(|binding| {
+                        [
+                            PropertyValue::ObjectIdentifier(binding.device_identifier),
+                            PropertyValue::Unsigned(binding.network_number.into()),
+                            PropertyValue::OctetString(binding.mac_address.clone()),
+                        ]
+                    })
+                    .collect(),
             )),
             PropertyIdentifier::DatabaseRevision => {
                 Ok(PropertyValue::Unsigned(self.database_revision.into()))
@@ -465,41 +528,19 @@ impl BacnetObject for Device {
                     Err(ObjectError::InvalidPropertyType)
                 }
             }
-            PropertyIdentifier::VendorName => {
-                if let PropertyValue::CharacterString(name) = value {
-                    self.vendor_name = name;
+            PropertyIdentifier::ApduTimeout => {
+                if let PropertyValue::Unsigned(timeout) = value {
+                    self.apdu_timeout = timeout
+                        .try_into()
+                        .map_err(|_| ObjectError::InvalidPropertyType)?;
                     Ok(())
                 } else {
                     Err(ObjectError::InvalidPropertyType)
                 }
             }
-            PropertyIdentifier::ModelName => {
-                if let PropertyValue::CharacterString(name) = value {
-                    self.model_name = name;
-                    Ok(())
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
-            }
-            PropertyIdentifier::FirmwareRevision => {
-                if let PropertyValue::CharacterString(revision) = value {
-                    self.firmware_revision = revision;
-                    Ok(())
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
-            }
-            PropertyIdentifier::ApplicationSoftwareVersion => {
-                if let PropertyValue::CharacterString(version) = value {
-                    self.application_software_version = version;
-                    Ok(())
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
-            }
-            PropertyIdentifier::DatabaseRevision => {
-                if let PropertyValue::Unsigned(revision) = value {
-                    self.database_revision = revision
+            PropertyIdentifier::NumberOfApduRetries => {
+                if let PropertyValue::Unsigned(retries) = value {
+                    self.number_of_apdu_retries = retries
                         .try_into()
                         .map_err(|_| ObjectError::InvalidPropertyType)?;
                     Ok(())
@@ -515,11 +556,8 @@ impl BacnetObject for Device {
         matches!(
             property,
             PropertyIdentifier::ObjectName
-                | PropertyIdentifier::VendorName
-                | PropertyIdentifier::ModelName
-                | PropertyIdentifier::FirmwareRevision
-                | PropertyIdentifier::ApplicationSoftwareVersion
-                | PropertyIdentifier::DatabaseRevision
+                | PropertyIdentifier::ApduTimeout
+                | PropertyIdentifier::NumberOfApduRetries
         )
     }
 
@@ -536,8 +574,13 @@ impl BacnetObject for Device {
             PropertyIdentifier::ApplicationSoftwareVersion,
             PropertyIdentifier::ProtocolVersion,
             PropertyIdentifier::ProtocolRevision,
+            PropertyIdentifier::ProtocolServicesSupported,
+            PropertyIdentifier::ProtocolObjectTypesSupported,
             PropertyIdentifier::MaxApduLengthAccepted,
             PropertyIdentifier::SegmentationSupported,
+            PropertyIdentifier::ApduTimeout,
+            PropertyIdentifier::NumberOfApduRetries,
+            PropertyIdentifier::DeviceAddressBinding,
             PropertyIdentifier::DatabaseRevision,
         ]
     }
@@ -653,24 +696,92 @@ bitflags! {
 }
 
 impl ProtocolServicesSupported {
+    /// Services executed by the hosted object server.
+    pub fn hosted_object_services() -> Self {
+        Self::READ_PROPERTY
+            | Self::READ_PROPERTY_MULTIPLE
+            | Self::WRITE_PROPERTY
+            | Self::I_AM
+            | Self::WHO_IS
+    }
+
     pub fn to_bool_vec(&self) -> Vec<bool> {
-        let mut vec = Vec::new();
-        for i in 0..64 {
-            vec.push((self.bits() & (1 << i)) != 0);
-        }
-        vec
+        self.to_bool_vec_with_len(50)
+    }
+
+    /// Encode only the service bits defined by the advertised protocol revision.
+    pub fn to_bool_vec_for_revision(&self, protocol_revision: u8) -> Vec<bool> {
+        self.to_bool_vec_with_len(protocol_service_bit_count(protocol_revision))
+    }
+
+    fn to_bool_vec_with_len(&self, bit_count: usize) -> Vec<bool> {
+        (0..bit_count)
+            .map(|bit| (self.bits() & (1_u64 << bit)) != 0)
+            .collect()
     }
 }
 
 impl From<Vec<bool>> for ProtocolServicesSupported {
     fn from(value: Vec<bool>) -> Self {
-        let mut services = ProtocolServicesSupported::empty();
-        for (v, f) in value.iter().zip(ProtocolServicesSupported::all().iter()) {
-            if *v {
-                services.insert(f);
-            }
+        let bits = value
+            .into_iter()
+            .take(50)
+            .enumerate()
+            .fold(0_u64, |bits, (index, enabled)| {
+                bits | (u64::from(enabled) << index)
+            });
+        ProtocolServicesSupported::from_bits_retain(bits)
+    }
+}
+
+/// Number of service bits defined by each BACnet protocol revision.
+pub fn protocol_service_bit_count(protocol_revision: u8) -> usize {
+    match protocol_revision {
+        0 => 35,
+        1 => 37,
+        2..=13 => 40,
+        14..=17 => 41,
+        18..=19 => 44,
+        20..=23 => 47,
+        24..=28 => 49,
+        _ => 50,
+    }
+}
+
+/// Build the Protocol_Object_Types_Supported bit string for a device.
+pub fn object_types_supported_bit_string(
+    object_types: &[ObjectType],
+    protocol_revision: u8,
+) -> Vec<bool> {
+    let bit_count = protocol_object_type_bit_count(protocol_revision);
+    let mut bits = vec![false; bit_count];
+    for object_type in object_types {
+        let index = u32::from(*object_type) as usize;
+        if let Some(bit) = bits.get_mut(index) {
+            *bit = true;
         }
-        services
+    }
+    bits
+}
+
+/// Number of standard object-type bits defined by each protocol revision.
+pub fn protocol_object_type_bit_count(protocol_revision: u8) -> usize {
+    match protocol_revision {
+        0 => 18,
+        1 => 21,
+        2..=3 => 23,
+        4 => 25,
+        5 => 30,
+        6..=8 => 31,
+        9 => 38,
+        10..=12 => 51,
+        13 => 53,
+        14..=15 => 55,
+        16 => 56,
+        17 => 57,
+        18..=19 => 60,
+        20..=23 => 63,
+        _ => 65,
     }
 }
 
@@ -678,7 +789,8 @@ impl From<Vec<bool>> for ProtocolServicesSupported {
 #[derive(Debug, Clone)]
 pub struct AddressBinding {
     pub device_identifier: ObjectIdentifier,
-    pub network_address: Vec<u8>,
+    pub network_number: u16,
+    pub mac_address: Vec<u8>,
 }
 
 /// Analog object types (AI, AO, AV)
@@ -756,6 +868,33 @@ mod tests {
         } else {
             panic!("Expected CharacterString");
         }
+
+        assert_eq!(
+            device
+                .get_property(PropertyIdentifier::ApduTimeout)
+                .unwrap(),
+            PropertyValue::Unsigned(3_000)
+        );
+        assert_eq!(
+            device
+                .get_property(PropertyIdentifier::NumberOfApduRetries)
+                .unwrap(),
+            PropertyValue::Unsigned(3)
+        );
+        assert_eq!(
+            device
+                .get_property(PropertyIdentifier::DeviceAddressBinding)
+                .unwrap(),
+            PropertyValue::List(Vec::new())
+        );
+        assert!(!device.is_property_writable(PropertyIdentifier::DatabaseRevision));
+        assert!(matches!(
+            device.set_property(
+                PropertyIdentifier::DatabaseRevision,
+                PropertyValue::Unsigned(42)
+            ),
+            Err(ObjectError::PropertyNotWritable)
+        ));
     }
 
     #[test]
@@ -767,5 +906,58 @@ mod tests {
         let bools = services.to_bool_vec();
         let services_new = ProtocolServicesSupported::from(bools);
         assert_eq!(services, services_new);
+    }
+
+    #[test]
+    fn hosted_device_capabilities_match_protocol_revision_22() {
+        let device = Device::new(123, "Test Device".to_string());
+
+        let PropertyValue::BitString(services) = device
+            .get_property(PropertyIdentifier::ProtocolServicesSupported)
+            .unwrap()
+        else {
+            panic!("expected protocol services bit string")
+        };
+        assert_eq!(services.len(), 47);
+        assert_eq!(
+            services
+                .iter()
+                .enumerate()
+                .filter_map(|(index, enabled)| enabled.then_some(index))
+                .collect::<Vec<_>>(),
+            vec![12, 14, 15, 26, 34]
+        );
+
+        let PropertyValue::BitString(object_types) = device
+            .get_property(PropertyIdentifier::ProtocolObjectTypesSupported)
+            .unwrap()
+        else {
+            panic!("expected protocol object types bit string")
+        };
+        assert_eq!(object_types.len(), 63);
+        assert!(object_types[u32::from(ObjectType::Device) as usize]);
+        assert_eq!(device.segmentation_supported, Segmentation::NoSegmentation);
+    }
+
+    #[test]
+    fn device_address_binding_encodes_nonempty_bindings() {
+        let mut device = Device::new(123, "Test Device".to_string());
+        let remote_device = ObjectIdentifier::new(ObjectType::Device, 456);
+        device.device_address_binding.push(AddressBinding {
+            device_identifier: remote_device,
+            network_number: 416,
+            mac_address: vec![192, 168, 1, 10, 0xBA, 0xC0],
+        });
+
+        assert_eq!(
+            device
+                .get_property(PropertyIdentifier::DeviceAddressBinding)
+                .unwrap(),
+            PropertyValue::List(vec![
+                PropertyValue::ObjectIdentifier(remote_device),
+                PropertyValue::Unsigned(416),
+                PropertyValue::OctetString(vec![192, 168, 1, 10, 0xBA, 0xC0]),
+            ])
+        );
     }
 }

@@ -4,12 +4,23 @@
 //! object types as defined in ASHRAE 135. These objects represent multi-position values.
 
 use crate::object::{
-    event_state::EventState, reliability::Reliability, BacnetObject, ObjectError, ObjectIdentifier,
-    ObjectType, PropertyIdentifier, PropertyValue, Result,
+    event_state::EventState, reliability::Reliability, write_priority_slot, BacnetObject,
+    ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, Result,
 };
 
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
+
+fn commandable_unsigned(value: PropertyValue) -> Result<Option<u32>> {
+    match value {
+        PropertyValue::Unsigned(value) => value
+            .try_into()
+            .map(Some)
+            .map_err(|_| ObjectError::InvalidPropertyType),
+        PropertyValue::Null => Ok(None),
+        _ => Err(ObjectError::InvalidPropertyType),
+    }
+}
 
 /// Multi-state Input object
 #[derive(Debug, Clone)]
@@ -182,12 +193,6 @@ impl MultiStateOutput {
 
     /// Write to priority array at specified priority level (1-16)
     pub fn write_priority(&mut self, priority: u8, value: Option<u32>) -> Result<()> {
-        if !(1..=16).contains(&priority) {
-            return Err(ObjectError::InvalidValue(
-                "Priority must be 1-16".to_string(),
-            ));
-        }
-
         if let Some(val) = value {
             if val < 1 || val > self.number_of_states {
                 return Err(ObjectError::InvalidValue(format!(
@@ -197,20 +202,13 @@ impl MultiStateOutput {
             }
         }
 
-        self.priority_array[(priority - 1) as usize] = value;
-        self.update_present_value();
+        self.present_value = write_priority_slot(
+            &mut self.priority_array,
+            priority,
+            value,
+            self.relinquish_default,
+        )?;
         Ok(())
-    }
-
-    /// Update present value based on priority array
-    fn update_present_value(&mut self) {
-        // Find highest priority non-null value
-        if let Some(value) = self.priority_array.iter().flatten().next() {
-            self.present_value = *value;
-            return;
-        }
-        // If all priorities are null, use relinquish default
-        self.present_value = self.relinquish_default;
     }
 
     /// Get the effective priority level for current present value
@@ -250,12 +248,6 @@ impl MultiStateValue {
 
     /// Write to priority array at specified priority level (1-16)
     pub fn write_priority(&mut self, priority: u8, value: Option<u32>) -> Result<()> {
-        if !(1..=16).contains(&priority) {
-            return Err(ObjectError::InvalidValue(
-                "Priority must be 1-16".to_string(),
-            ));
-        }
-
         if let Some(val) = value {
             if val < 1 || val > self.number_of_states {
                 return Err(ObjectError::InvalidValue(format!(
@@ -265,20 +257,13 @@ impl MultiStateValue {
             }
         }
 
-        self.priority_array[(priority - 1) as usize] = value;
-        self.update_present_value();
+        self.present_value = write_priority_slot(
+            &mut self.priority_array,
+            priority,
+            value,
+            self.relinquish_default,
+        )?;
         Ok(())
-    }
-
-    /// Update present value based on priority array
-    fn update_present_value(&mut self) {
-        // Find highest priority non-null value
-        if let Some(value) = self.priority_array.iter().flatten().next() {
-            self.present_value = *value;
-            return;
-        }
-        // If all priorities are null, use relinquish default
-        self.present_value = self.relinquish_default;
     }
 }
 
@@ -416,17 +401,7 @@ impl BacnetObject for MultiStateOutput {
             return self.set_property(property, value);
         }
 
-        let priority = priority.unwrap_or(16);
-        let value = match value {
-            PropertyValue::Unsigned(value) => Some(
-                value
-                    .try_into()
-                    .map_err(|_| ObjectError::InvalidPropertyType)?,
-            ),
-            PropertyValue::Null => None,
-            _ => return Err(ObjectError::InvalidPropertyType),
-        };
-        self.write_priority(priority, value)
+        self.write_priority(priority.unwrap_or(16), commandable_unsigned(value)?)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
@@ -520,17 +495,7 @@ impl BacnetObject for MultiStateValue {
             return self.set_property(property, value);
         }
 
-        let priority = priority.unwrap_or(16);
-        let value = match value {
-            PropertyValue::Unsigned(value) => Some(
-                value
-                    .try_into()
-                    .map_err(|_| ObjectError::InvalidPropertyType)?,
-            ),
-            PropertyValue::Null => None,
-            _ => return Err(ObjectError::InvalidPropertyType),
-        };
-        self.write_priority(priority, value)
+        self.write_priority(priority.unwrap_or(16), commandable_unsigned(value)?)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {

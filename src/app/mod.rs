@@ -163,8 +163,8 @@ pub enum Apdu {
     Error {
         invoke_id: u8,
         service_choice: ConfirmedServiceChoice,
-        error_class: u8,
-        error_code: u8,
+        error_class: u32,
+        error_code: u32,
     },
 
     /// Reject PDU
@@ -249,7 +249,42 @@ pub enum TransactionState {
     Complete,
 }
 
+fn encoded_enumerated_len(value: u32) -> usize {
+    let payload_length = match value {
+        0..=0xff => 1,
+        0x100..=0xffff => 2,
+        0x1_0000..=0xff_ffff => 3,
+        _ => 4,
+    };
+    1 + payload_length
+}
+
 impl Apdu {
+    /// Return the encoded APDU length without allocating an encoded buffer.
+    pub fn encoded_len(&self) -> usize {
+        match self {
+            Apdu::ConfirmedRequest {
+                segmented,
+                service_data,
+                ..
+            } => 4 + usize::from(*segmented) * 2 + service_data.len(),
+            Apdu::UnconfirmedRequest { service_data, .. } => 2 + service_data.len(),
+            Apdu::SimpleAck { .. } => 3,
+            Apdu::ComplexAck {
+                segmented,
+                service_data,
+                ..
+            } => 3 + usize::from(*segmented) * 2 + service_data.len(),
+            Apdu::SegmentAck { .. } => 4,
+            Apdu::Error {
+                error_class,
+                error_code,
+                ..
+            } => 3 + encoded_enumerated_len(*error_class) + encoded_enumerated_len(*error_code),
+            Apdu::Reject { .. } | Apdu::Abort { .. } => 3,
+        }
+    }
+
     /// Encode APDU to bytes
     pub fn encode(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
@@ -404,8 +439,8 @@ impl Apdu {
                 buffer.push(*invoke_id);
                 // Service choice
                 buffer.push(*service_choice as u8);
-                encode_enumerated(&mut buffer, *error_class as u32);
-                encode_enumerated(&mut buffer, *error_code as u32);
+                encode_enumerated(&mut buffer, *error_class);
+                encode_enumerated(&mut buffer, *error_code);
             }
 
             Apdu::Reject {
@@ -439,6 +474,7 @@ impl Apdu {
             }
         }
 
+        debug_assert_eq!(buffer.len(), self.encoded_len());
         buffer
     }
 
@@ -693,8 +729,8 @@ impl Apdu {
                 Ok(Apdu::Error {
                     invoke_id,
                     service_choice,
-                    error_class: error_class as u8,
-                    error_code: error_code as u8,
+                    error_class,
+                    error_code,
                 })
             }
 
@@ -1363,8 +1399,8 @@ impl ApplicationLayerHandler {
         &mut self,
         invoke_id: u8,
         _service_choice: ConfirmedServiceChoice,
-        error_class: u8,
-        error_code: u8,
+        error_class: u32,
+        error_code: u32,
     ) -> Result<Option<Apdu>> {
         self.stats.errors += 1;
         self.transaction_manager
@@ -1479,7 +1515,7 @@ impl TransactionManager {
     }
 
     /// Mark transaction as error
-    pub fn error_transaction(&mut self, invoke_id: u8, _error_class: u8, _error_code: u8) {
+    pub fn error_transaction(&mut self, invoke_id: u8, _error_class: u32, _error_code: u32) {
         if let Some(transaction) = self
             .transactions
             .iter_mut()
@@ -1750,6 +1786,28 @@ mod tests {
             }
             _ => panic!("Expected SimpleAck"),
         }
+    }
+
+    #[test]
+    fn error_apdu_preserves_full_enumerated_codes() {
+        let apdu = Apdu::Error {
+            invoke_id: 42,
+            service_choice: ConfirmedServiceChoice::ReadProperty,
+            error_class: 300,
+            error_code: 70_000,
+        };
+
+        let encoded = apdu.encode();
+        assert_eq!(encoded.len(), apdu.encoded_len());
+        assert!(matches!(
+            Apdu::decode(&encoded).unwrap(),
+            Apdu::Error {
+                invoke_id: 42,
+                error_class: 300,
+                error_code: 70_000,
+                ..
+            }
+        ));
     }
 
     #[test]

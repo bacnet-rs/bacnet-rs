@@ -14,15 +14,28 @@ use std::{
 use alloc::{boxed::Box, collections::BTreeMap as HashMap, string::String, sync::Arc, vec::Vec};
 
 use super::{
-    BacnetObject, Device, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier,
-    PropertyValue, Result,
+    object_types_supported_bit_string, BacnetObject, Device, ObjectError, ObjectIdentifier,
+    ObjectType, PropertyIdentifier, PropertyValue, Result,
 };
+
+#[cfg(feature = "std")]
+type ObjectEntry = RwLock<Box<dyn BacnetObject>>;
+
+#[cfg(feature = "std")]
+fn requested_object_name(property: PropertyIdentifier, value: &PropertyValue) -> Option<String> {
+    match (property, value) {
+        (PropertyIdentifier::ObjectName, PropertyValue::CharacterString(name)) => {
+            Some(name.clone())
+        }
+        _ => None,
+    }
+}
 
 /// Object database for managing BACnet objects
 #[cfg(feature = "std")]
 pub struct ObjectDatabase {
     /// Objects stored by identifier
-    objects: Arc<RwLock<HashMap<ObjectIdentifier, Box<dyn BacnetObject>>>>,
+    objects: Arc<RwLock<HashMap<ObjectIdentifier, ObjectEntry>>>,
     /// Index by object type for fast lookup
     type_index: Arc<RwLock<HashMap<ObjectType, Vec<ObjectIdentifier>>>>,
     /// Object name index for fast lookup by name
@@ -52,7 +65,10 @@ impl ObjectDatabase {
         name_index.insert(device.object_name.clone(), device_id);
 
         // Store device object
-        objects.insert(device_id, Box::new(device) as Box<dyn BacnetObject>);
+        objects.insert(
+            device_id,
+            RwLock::new(Box::new(device) as Box<dyn BacnetObject>),
+        );
 
         Self {
             objects: Arc::new(RwLock::new(objects)),
@@ -68,17 +84,6 @@ impl ObjectDatabase {
     pub fn add_object(&self, object: Box<dyn BacnetObject>) -> Result<()> {
         let identifier = object.identifier();
 
-        // Check if object already exists
-        {
-            let objects = self.objects.read().unwrap();
-            if objects.contains_key(&identifier) {
-                return Err(ObjectError::InvalidConfiguration(format!(
-                    "Object {} already exists",
-                    identifier.instance
-                )));
-            }
-        }
-
         // Get object name for indexing
         let object_name = match object.get_property(PropertyIdentifier::ObjectName)? {
             PropertyValue::CharacterString(name) => name,
@@ -91,6 +96,18 @@ impl ObjectDatabase {
             let mut type_index = self.type_index.write().unwrap();
             let mut name_index = self.name_index.write().unwrap();
 
+            if objects.contains_key(&identifier) {
+                return Err(ObjectError::InvalidConfiguration(format!(
+                    "Object {} already exists",
+                    identifier.instance
+                )));
+            }
+            if let Some(existing) = name_index.get(&object_name) {
+                return Err(ObjectError::InvalidValue(format!(
+                    "Object name {object_name:?} is already used by {existing:?}"
+                )));
+            }
+
             // Add to type index
             type_index
                 .entry(identifier.object_type)
@@ -101,7 +118,7 @@ impl ObjectDatabase {
             name_index.insert(object_name, identifier);
 
             // Store object
-            objects.insert(identifier, object);
+            objects.insert(identifier, RwLock::new(object));
 
             // Update database revision
             self.increment_revision();
@@ -117,21 +134,19 @@ impl ObjectDatabase {
             return Err(ObjectError::WriteAccessDenied);
         }
 
-        // Get object name for index removal
-        let object_name = {
-            let objects = self.objects.read().unwrap();
-            match objects.get(&identifier) {
-                Some(obj) => match obj.get_property(PropertyIdentifier::ObjectName)? {
-                    PropertyValue::CharacterString(name) => name,
-                    _ => return Err(ObjectError::InvalidPropertyType),
-                },
-                None => return Err(ObjectError::NotFound),
-            }
-        };
-
         // Remove from all indices and storage
         {
             let mut objects = self.objects.write().unwrap();
+            let object_name = match objects.get(&identifier) {
+                Some(entry) => {
+                    let object = entry.read().unwrap();
+                    match object.get_property(PropertyIdentifier::ObjectName)? {
+                        PropertyValue::CharacterString(name) => name,
+                        _ => return Err(ObjectError::InvalidPropertyType),
+                    }
+                }
+                None => return Err(ObjectError::NotFound),
+            };
             let mut type_index = self.type_index.write().unwrap();
             let mut name_index = self.name_index.write().unwrap();
 
@@ -159,20 +174,48 @@ impl ObjectDatabase {
         identifier: ObjectIdentifier,
         property: PropertyIdentifier,
     ) -> Result<PropertyValue> {
-        let objects = self.objects.read().unwrap();
-        match objects.get(&identifier) {
-            Some(obj) => obj.get_property(property),
-            None => Err(ObjectError::NotFound),
+        if identifier == self.device_id {
+            match property {
+                PropertyIdentifier::DatabaseRevision => {
+                    return Ok(PropertyValue::Unsigned(self.revision().into()));
+                }
+                PropertyIdentifier::ProtocolObjectTypesSupported => {
+                    let protocol_revision = match self
+                        .get_stored_property(identifier, PropertyIdentifier::ProtocolRevision)?
+                    {
+                        PropertyValue::Unsigned(revision) => revision
+                            .try_into()
+                            .map_err(|_| ObjectError::InvalidPropertyType)?,
+                        _ => return Err(ObjectError::InvalidPropertyType),
+                    };
+                    return Ok(PropertyValue::BitString(object_types_supported_bit_string(
+                        &self.object_types(),
+                        protocol_revision,
+                    )));
+                }
+                _ => {}
+            }
         }
+        self.get_stored_property(identifier, property)
+    }
+
+    fn get_stored_property(
+        &self,
+        identifier: ObjectIdentifier,
+        property: PropertyIdentifier,
+    ) -> Result<PropertyValue> {
+        let objects = self.objects.read().unwrap();
+        let entry = objects.get(&identifier).ok_or(ObjectError::NotFound)?;
+        let object = entry.read().unwrap();
+        object.get_property(property)
     }
 
     /// Return the properties exposed by an object.
     pub fn property_list(&self, identifier: ObjectIdentifier) -> Result<Vec<PropertyIdentifier>> {
         let objects = self.objects.read().unwrap();
-        match objects.get(&identifier) {
-            Some(object) => Ok(object.property_list()),
-            None => Err(ObjectError::NotFound),
-        }
+        let entry = objects.get(&identifier).ok_or(ObjectError::NotFound)?;
+        let object = entry.read().unwrap();
+        Ok(object.property_list())
     }
 
     /// Set a property value on an object
@@ -182,17 +225,10 @@ impl ObjectDatabase {
         property: PropertyIdentifier,
         value: PropertyValue,
     ) -> Result<()> {
-        let mut objects = self.objects.write().unwrap();
-        match objects.get_mut(&identifier) {
-            Some(obj) => {
-                let result = obj.set_property(property, value);
-                if result.is_ok() {
-                    self.increment_revision();
-                }
-                result
-            }
-            None => Err(ObjectError::NotFound),
-        }
+        let requested_name = requested_object_name(property, &value);
+        self.update_object(identifier, property, requested_name, move |object| {
+            object.set_property(property, value)
+        })
     }
 
     /// Set a property while preserving the command priority from the BACnet
@@ -204,17 +240,68 @@ impl ObjectDatabase {
         value: PropertyValue,
         priority: Option<u8>,
     ) -> Result<()> {
-        let mut objects = self.objects.write().unwrap();
-        match objects.get_mut(&identifier) {
-            Some(object) => {
-                let result = object.set_property_with_priority(property, value, priority);
-                if result.is_ok() {
-                    self.increment_revision();
-                }
-                result
+        let requested_name = requested_object_name(property, &value);
+        self.update_object(identifier, property, requested_name, move |object| {
+            object.set_property_with_priority(property, value, priority)
+        })
+    }
+
+    fn update_object<F>(
+        &self,
+        identifier: ObjectIdentifier,
+        property: PropertyIdentifier,
+        requested_name: Option<String>,
+        update: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&mut dyn BacnetObject) -> Result<()>,
+    {
+        let objects = self.objects.read().unwrap();
+        let entry = objects.get(&identifier).ok_or(ObjectError::NotFound)?;
+        let mut object = entry.write().unwrap();
+        let mut name_index = if let Some(new_name) = requested_name.as_ref() {
+            let name_index = self.name_index.write().unwrap();
+            if name_index
+                .get(new_name)
+                .is_some_and(|existing| *existing != identifier)
+            {
+                return Err(ObjectError::InvalidValue(format!(
+                    "Object name {new_name:?} is already in use"
+                )));
             }
-            None => Err(ObjectError::NotFound),
+            Some(name_index)
+        } else {
+            None
+        };
+        let old_name = if requested_name.is_some() {
+            match object.get_property(PropertyIdentifier::ObjectName)? {
+                PropertyValue::CharacterString(name) => Some(name),
+                _ => return Err(ObjectError::InvalidPropertyType),
+            }
+        } else {
+            None
+        };
+
+        update(object.as_mut())?;
+
+        if let Some(old_name) = old_name {
+            let new_name = match object.get_property(PropertyIdentifier::ObjectName)? {
+                PropertyValue::CharacterString(name) => name,
+                _ => return Err(ObjectError::InvalidPropertyType),
+            };
+            let name_index = name_index
+                .as_mut()
+                .expect("ObjectName updates must hold the name index");
+            name_index.remove(&old_name);
+            name_index.insert(new_name, identifier);
         }
+
+        drop(object);
+        drop(objects);
+        if property == PropertyIdentifier::ObjectName {
+            self.increment_revision();
+        }
+        Ok(())
     }
 
     /// Get an object by name
@@ -235,7 +322,23 @@ impl ObjectDatabase {
     /// Get all object identifiers in the database
     pub fn get_all_objects(&self) -> Vec<ObjectIdentifier> {
         let objects = self.objects.read().unwrap();
-        objects.keys().cloned().collect()
+        let mut identifiers: Vec<_> = objects.keys().cloned().collect();
+        identifiers
+            .sort_by_key(|identifier| (u32::from(identifier.object_type), identifier.instance));
+        identifiers
+    }
+
+    /// Get every object type that currently has at least one object.
+    pub fn object_types(&self) -> Vec<ObjectType> {
+        let type_index = self.type_index.read().unwrap();
+        let mut object_types: Vec<_> = type_index
+            .iter()
+            .filter_map(|(object_type, identifiers)| {
+                (!identifiers.is_empty()).then_some(*object_type)
+            })
+            .collect();
+        object_types.sort_by_key(|object_type| u32::from(*object_type));
+        object_types
     }
 
     /// Get object count
@@ -300,8 +403,9 @@ impl ObjectDatabase {
         let objects = self.objects.read().unwrap();
         let mut results = Vec::new();
 
-        for (&id, obj) in objects.iter() {
-            if let Ok(prop_value) = obj.get_property(property) {
+        for (&id, entry) in objects.iter() {
+            let object = entry.read().unwrap();
+            if let Ok(prop_value) = object.get_property(property) {
                 if Self::property_values_equal(&prop_value, value) {
                     results.push(id);
                 }
@@ -413,11 +517,71 @@ impl DatabaseBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        thread,
+        time::Duration,
+    };
+
     use super::*;
     use crate::object::{
         analog::{AnalogInput, AnalogValue},
         binary::BinaryInput,
     };
+
+    struct SlowWritableObject {
+        identifier: ObjectIdentifier,
+        name: String,
+        present_value: f32,
+        active_writes: Arc<AtomicUsize>,
+        maximum_active_writes: Arc<AtomicUsize>,
+    }
+
+    impl BacnetObject for SlowWritableObject {
+        fn identifier(&self) -> ObjectIdentifier {
+            self.identifier
+        }
+
+        fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
+            match property {
+                PropertyIdentifier::ObjectName => {
+                    Ok(PropertyValue::CharacterString(self.name.clone()))
+                }
+                PropertyIdentifier::PresentValue => Ok(PropertyValue::Real(self.present_value)),
+                _ => Err(ObjectError::UnknownProperty),
+            }
+        }
+
+        fn set_property(
+            &mut self,
+            property: PropertyIdentifier,
+            value: PropertyValue,
+        ) -> Result<()> {
+            match (property, value) {
+                (PropertyIdentifier::PresentValue, PropertyValue::Real(value)) => {
+                    let active = self.active_writes.fetch_add(1, Ordering::SeqCst) + 1;
+                    self.maximum_active_writes
+                        .fetch_max(active, Ordering::SeqCst);
+                    thread::sleep(Duration::from_millis(100));
+                    self.present_value = value;
+                    self.active_writes.fetch_sub(1, Ordering::SeqCst);
+                    Ok(())
+                }
+                _ => Err(ObjectError::PropertyNotWritable),
+            }
+        }
+
+        fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
+            property == PropertyIdentifier::PresentValue
+        }
+
+        fn property_list(&self) -> Vec<PropertyIdentifier> {
+            vec![
+                PropertyIdentifier::ObjectName,
+                PropertyIdentifier::PresentValue,
+            ]
+        }
+    }
 
     #[test]
     fn test_database_creation() {
@@ -471,10 +635,55 @@ mod tests {
         let found_id = db.get_object_by_name("Setpoint").unwrap();
         assert_eq!(found_id, av_id);
 
+        db.set_property(
+            av_id,
+            PropertyIdentifier::ObjectName,
+            PropertyValue::CharacterString("Occupied setpoint".to_string()),
+        )
+        .unwrap();
+        assert!(matches!(
+            db.get_object_by_name("Setpoint"),
+            Err(ObjectError::NotFound)
+        ));
+        assert_eq!(db.get_object_by_name("Occupied setpoint").unwrap(), av_id);
+
+        let other_id = ObjectIdentifier::new(ObjectType::AnalogValue, 101);
+        db.add_object(Box::new(AnalogValue::new(
+            101,
+            "Unoccupied setpoint".to_string(),
+        )))
+        .unwrap();
+        assert!(matches!(
+            db.set_property(
+                other_id,
+                PropertyIdentifier::ObjectName,
+                PropertyValue::CharacterString("Occupied setpoint".to_string()),
+            ),
+            Err(ObjectError::InvalidValue(_))
+        ));
+        assert_eq!(db.get_object_by_name("Occupied setpoint").unwrap(), av_id);
+        assert_eq!(
+            db.get_object_by_name("Unoccupied setpoint").unwrap(),
+            other_id
+        );
+
+        assert!(matches!(
+            db.add_object(Box::new(AnalogValue::new(
+                102,
+                "Occupied setpoint".to_string(),
+            ))),
+            Err(ObjectError::InvalidValue(_))
+        ));
+
         // Lookup by type
         let objects = db.get_objects_by_type(ObjectType::AnalogValue);
-        assert_eq!(objects.len(), 1);
-        assert_eq!(objects[0], av_id);
+        assert_eq!(objects.len(), 2);
+        assert!(objects.contains(&av_id));
+        assert!(objects.contains(&other_id));
+        assert_eq!(
+            db.object_types(),
+            vec![ObjectType::AnalogValue, ObjectType::Device]
+        );
     }
 
     #[test]
@@ -530,5 +739,47 @@ mod tests {
 
         // Next instance should be max + 1
         assert_eq!(db.next_instance(ObjectType::AnalogInput), 11);
+    }
+
+    #[test]
+    fn writes_to_different_objects_do_not_share_an_object_lock() {
+        let database = Arc::new(ObjectDatabase::new(Device::new(
+            1234,
+            "Test Device".to_string(),
+        )));
+        let active_writes = Arc::new(AtomicUsize::new(0));
+        let maximum_active_writes = Arc::new(AtomicUsize::new(0));
+        for instance in 1..=2 {
+            database
+                .add_object(Box::new(SlowWritableObject {
+                    identifier: ObjectIdentifier::new(ObjectType::AnalogValue, instance),
+                    name: format!("Value {instance}"),
+                    present_value: 0.0,
+                    active_writes: Arc::clone(&active_writes),
+                    maximum_active_writes: Arc::clone(&maximum_active_writes),
+                }))
+                .unwrap();
+        }
+
+        let writers: Vec<_> = (1..=2)
+            .map(|instance| {
+                let database = Arc::clone(&database);
+                thread::spawn(move || {
+                    database
+                        .set_property(
+                            ObjectIdentifier::new(ObjectType::AnalogValue, instance),
+                            PropertyIdentifier::PresentValue,
+                            PropertyValue::Real(instance as f32),
+                        )
+                        .unwrap();
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+
+        assert_eq!(maximum_active_writes.load(Ordering::SeqCst), 2);
+        assert_eq!(database.revision(), 3);
     }
 }

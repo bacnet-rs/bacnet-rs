@@ -5,12 +5,20 @@
 
 use crate::object::{
     engineering_units::EngineeringUnits, event_state::EventState, reliability::Reliability,
-    BacnetObject, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue,
-    Result,
+    write_priority_slot, BacnetObject, ObjectError, ObjectIdentifier, ObjectType,
+    PropertyIdentifier, PropertyValue, Result,
 };
 
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
+
+fn commandable_real(value: PropertyValue) -> Result<Option<f32>> {
+    match value {
+        PropertyValue::Real(value) => Ok(Some(value)),
+        PropertyValue::Null => Ok(None),
+        _ => Err(ObjectError::InvalidPropertyType),
+    }
+}
 
 /// Analog Input object
 #[derive(Debug, Clone)]
@@ -198,25 +206,13 @@ impl AnalogOutput {
 
     /// Write to priority array at specified priority level (1-16)
     pub fn write_priority(&mut self, priority: u8, value: Option<f32>) -> Result<()> {
-        if !(1..=16).contains(&priority) {
-            return Err(ObjectError::InvalidValue(
-                "Priority must be 1-16".to_string(),
-            ));
-        }
-        self.priority_array[(priority - 1) as usize] = value;
-        self.update_present_value();
+        self.present_value = write_priority_slot(
+            &mut self.priority_array,
+            priority,
+            value,
+            self.relinquish_default,
+        )?;
         Ok(())
-    }
-
-    /// Update present value based on priority array
-    fn update_present_value(&mut self) {
-        // Find highest priority non-null value
-        if let Some(value) = self.priority_array.iter().flatten().next() {
-            self.present_value = *value;
-            return;
-        }
-        // If all priorities are null, use relinquish default
-        self.present_value = self.relinquish_default;
     }
 
     /// Get the effective priority level for current present value
@@ -251,25 +247,13 @@ impl AnalogValue {
 
     /// Write to priority array at specified priority level (1-16)
     pub fn write_priority(&mut self, priority: u8, value: Option<f32>) -> Result<()> {
-        if !(1..=16).contains(&priority) {
-            return Err(ObjectError::InvalidValue(
-                "Priority must be 1-16".to_string(),
-            ));
-        }
-        self.priority_array[(priority - 1) as usize] = value;
-        self.update_present_value();
+        self.present_value = write_priority_slot(
+            &mut self.priority_array,
+            priority,
+            value,
+            self.relinquish_default,
+        )?;
         Ok(())
-    }
-
-    /// Update present value based on priority array
-    fn update_present_value(&mut self) {
-        // Find highest priority non-null value
-        if let Some(value) = self.priority_array.iter().flatten().next() {
-            self.present_value = *value;
-            return;
-        }
-        // If all priorities are null, use relinquish default
-        self.present_value = self.relinquish_default;
     }
 }
 
@@ -403,12 +387,7 @@ impl BacnetObject for AnalogOutput {
             return self.set_property(property, value);
         }
 
-        let priority = priority.unwrap_or(16);
-        match value {
-            PropertyValue::Real(value) => self.write_priority(priority, Some(value)),
-            PropertyValue::Null => self.write_priority(priority, None),
-            _ => Err(ObjectError::InvalidPropertyType),
-        }
+        self.write_priority(priority.unwrap_or(16), commandable_real(value)?)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
@@ -523,12 +502,7 @@ impl BacnetObject for AnalogValue {
             return self.set_property(property, value);
         }
 
-        let priority = priority.unwrap_or(16);
-        match value {
-            PropertyValue::Real(value) => self.write_priority(priority, Some(value)),
-            PropertyValue::Null => self.write_priority(priority, None),
-            _ => Err(ObjectError::InvalidPropertyType),
-        }
+        self.write_priority(priority.unwrap_or(16), commandable_real(value)?)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {

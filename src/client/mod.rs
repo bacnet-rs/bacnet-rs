@@ -1099,8 +1099,8 @@ impl BacnetClient {
                 error_code,
                 ..
             } if invoke_id == expected_invoke_id => Err(ClientError::PropertyError {
-                class: error_class as u32,
-                code: error_code as u32,
+                class: error_class,
+                code: error_code,
             }),
             Apdu::Reject {
                 invoke_id,

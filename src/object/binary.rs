@@ -4,8 +4,8 @@
 //! as defined in ASHRAE 135. These objects represent binary (two-state) values in BACnet.
 
 use crate::object::{
-    event_state::EventState, reliability::Reliability, BacnetObject, ObjectError, ObjectIdentifier,
-    ObjectType, PropertyIdentifier, PropertyValue, Result,
+    event_state::EventState, reliability::Reliability, write_priority_slot, BacnetObject,
+    ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, Result,
 };
 
 #[cfg(not(feature = "std"))]
@@ -35,6 +35,18 @@ impl From<bool> for BinaryPV {
 impl From<BinaryPV> for bool {
     fn from(value: BinaryPV) -> Self {
         value == BinaryPV::Active
+    }
+}
+
+fn commandable_binary(value: PropertyValue) -> Result<Option<BinaryPV>> {
+    match value {
+        PropertyValue::Enumerated(0) => Ok(Some(BinaryPV::Inactive)),
+        PropertyValue::Enumerated(1) => Ok(Some(BinaryPV::Active)),
+        PropertyValue::Enumerated(_) => Err(ObjectError::InvalidValue(
+            "Binary value must be 0 or 1".to_string(),
+        )),
+        PropertyValue::Null => Ok(None),
+        _ => Err(ObjectError::InvalidPropertyType),
     }
 }
 
@@ -252,25 +264,13 @@ impl BinaryOutput {
 
     /// Write to priority array at specified priority level (1-16)
     pub fn write_priority(&mut self, priority: u8, value: Option<BinaryPV>) -> Result<()> {
-        if !(1..=16).contains(&priority) {
-            return Err(ObjectError::InvalidValue(
-                "Priority must be 1-16".to_string(),
-            ));
-        }
-        self.priority_array[(priority - 1) as usize] = value;
-        self.update_present_value();
+        self.present_value = write_priority_slot(
+            &mut self.priority_array,
+            priority,
+            value,
+            self.relinquish_default,
+        )?;
         Ok(())
-    }
-
-    /// Update present value based on priority array
-    fn update_present_value(&mut self) {
-        // Find highest priority non-null value
-        if let Some(value) = self.priority_array.iter().flatten().next() {
-            self.present_value = *value;
-            return;
-        }
-        // If all priorities are null, use relinquish default
-        self.present_value = self.relinquish_default;
     }
 
     /// Get the effective priority level for current present value
@@ -305,25 +305,13 @@ impl BinaryValue {
 
     /// Write to priority array at specified priority level (1-16)
     pub fn write_priority(&mut self, priority: u8, value: Option<BinaryPV>) -> Result<()> {
-        if !(1..=16).contains(&priority) {
-            return Err(ObjectError::InvalidValue(
-                "Priority must be 1-16".to_string(),
-            ));
-        }
-        self.priority_array[(priority - 1) as usize] = value;
-        self.update_present_value();
+        self.present_value = write_priority_slot(
+            &mut self.priority_array,
+            priority,
+            value,
+            self.relinquish_default,
+        )?;
         Ok(())
-    }
-
-    /// Update present value based on priority array
-    fn update_present_value(&mut self) {
-        // Find highest priority non-null value
-        if let Some(value) = self.priority_array.iter().flatten().next() {
-            self.present_value = *value;
-            return;
-        }
-        // If all priorities are null, use relinquish default
-        self.present_value = self.relinquish_default;
     }
 }
 
@@ -461,19 +449,7 @@ impl BacnetObject for BinaryOutput {
             return self.set_property(property, value);
         }
 
-        let priority = priority.unwrap_or(16);
-        let value = match value {
-            PropertyValue::Enumerated(0) => Some(BinaryPV::Inactive),
-            PropertyValue::Enumerated(1) => Some(BinaryPV::Active),
-            PropertyValue::Enumerated(_) => {
-                return Err(ObjectError::InvalidValue(
-                    "Binary value must be 0 or 1".to_string(),
-                ))
-            }
-            PropertyValue::Null => None,
-            _ => return Err(ObjectError::InvalidPropertyType),
-        };
-        self.write_priority(priority, value)
+        self.write_priority(priority.unwrap_or(16), commandable_binary(value)?)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
@@ -567,19 +543,7 @@ impl BacnetObject for BinaryValue {
             return self.set_property(property, value);
         }
 
-        let priority = priority.unwrap_or(16);
-        let value = match value {
-            PropertyValue::Enumerated(0) => Some(BinaryPV::Inactive),
-            PropertyValue::Enumerated(1) => Some(BinaryPV::Active),
-            PropertyValue::Enumerated(_) => {
-                return Err(ObjectError::InvalidValue(
-                    "Binary value must be 0 or 1".to_string(),
-                ))
-            }
-            PropertyValue::Null => None,
-            _ => return Err(ObjectError::InvalidPropertyType),
-        };
-        self.write_priority(priority, value)
+        self.write_priority(priority.unwrap_or(16), commandable_binary(value)?)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {

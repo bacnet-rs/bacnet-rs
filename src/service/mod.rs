@@ -465,23 +465,26 @@ impl WhoIsRequest {
                     request.device_instance_range_low_limit = Some(low);
                     pos += consumed;
 
-                    // If we have low limit, we must have high limit
-                    if pos < data.len() {
-                        match decode_context_unsigned(&data[pos..], 1) {
-                            Ok((high, _consumed)) => {
-                                request.device_instance_range_high_limit = Some(high);
-                            }
-                            Err(_) => {
-                                // Invalid format - low without high
-                                return Err(crate::encoding::EncodingError::InvalidFormat(
-                                    "Who-Is request has low limit without high limit".to_string(),
-                                ));
-                            }
-                        }
+                    // If we have a low limit, a high limit must consume the
+                    // remainder of the request.
+                    let (high, consumed) =
+                        decode_context_unsigned(&data[pos..], 1).map_err(|_| {
+                            crate::encoding::EncodingError::InvalidFormat(
+                                "Who-Is request has low limit without high limit".to_string(),
+                            )
+                        })?;
+                    pos += consumed;
+                    if pos != data.len() {
+                        return Err(crate::encoding::EncodingError::InvalidFormat(
+                            "Who-Is request contains trailing data".to_string(),
+                        ));
                     }
+                    request.device_instance_range_high_limit = Some(high);
                 }
                 Err(_) => {
-                    // No device range specified - broadcast to all
+                    return Err(crate::encoding::EncodingError::InvalidFormat(
+                        "Who-Is request contains an invalid device range".to_string(),
+                    ));
                 }
             }
         }
@@ -896,19 +899,10 @@ impl WritePropertyRequest {
         }
         pos += 1;
 
-        // Find closing tag
+        // Find the matching closing tag without interpreting bytes inside
+        // application values as context tags.
         let value_start = pos;
-        let mut value_end = pos;
-        while value_end < data.len() {
-            if data[value_end] == 0x3F {
-                break;
-            }
-            value_end += 1;
-        }
-
-        if value_end >= data.len() {
-            return Err(crate::encoding::EncodingError::InvalidTag);
-        }
+        let value_end = find_constructed_value_end(data, pos, 3)?;
 
         let property_value = data[value_start..value_end].to_vec();
         pos = value_end + 1;
@@ -933,6 +927,51 @@ impl WritePropertyRequest {
             priority,
         })
     }
+}
+
+fn find_constructed_value_end(
+    data: &[u8],
+    mut position: usize,
+    outer_tag: u8,
+) -> EncodingResult<usize> {
+    let mut open_tags = vec![outer_tag];
+
+    while position < data.len() {
+        let (tag, length, header_length) = decode_tag(&data[position..])?;
+        match tag {
+            BACnetTag::Application(_) => {
+                let (_, consumed) = decode_property_value(&data[position..])?;
+                position += consumed;
+            }
+            BACnetTag::Context(tag_number) => match data[position] & 0x07 {
+                6 => {
+                    open_tags.push(tag_number);
+                    position += header_length;
+                }
+                7 => {
+                    if open_tags.pop() != Some(tag_number) {
+                        return Err(EncodingError::InvalidTag);
+                    }
+                    if open_tags.is_empty() {
+                        return Ok(position);
+                    }
+                    position += header_length;
+                }
+                _ => {
+                    let end = position
+                        .checked_add(header_length)
+                        .and_then(|position| position.checked_add(length))
+                        .ok_or(EncodingError::InvalidLength)?;
+                    if end > data.len() {
+                        return Err(EncodingError::BufferUnderflow);
+                    }
+                    position = end;
+                }
+            },
+        }
+    }
+
+    Err(EncodingError::InvalidTag)
 }
 
 /// Read Property Multiple request (confirmed service)
@@ -2227,6 +2266,10 @@ mod tests {
         // Test decoding
         let decoded = WhoIsRequest::decode(&buffer).unwrap();
         assert_eq!(decoded, whois_specific);
+
+        assert!(WhoIsRequest::decode(&[0x09, 100]).is_err());
+        assert!(WhoIsRequest::decode(&[0x09, 100, 0x19, 200, 0x00]).is_err());
+        assert!(WhoIsRequest::decode(&[0x00]).is_err());
     }
 
     #[test]
@@ -2300,6 +2343,27 @@ mod tests {
         );
         assert_eq!(decoded.property_array_index, Some(300));
         assert_eq!(decoded.priority, Some(16));
+    }
+
+    #[test]
+    fn write_property_value_may_contain_a_closing_tag_byte() {
+        let object_id = ObjectIdentifier::new(ObjectType::AnalogValue, 1);
+        let mut encoded_value = Vec::new();
+        crate::encoding::encode_real(&mut encoded_value, 1.0).unwrap();
+        assert!(encoded_value.contains(&0x3F));
+
+        let request = WritePropertyRequest::with_priority(
+            object_id,
+            PropertyIdentifier::PresentValue.into(),
+            encoded_value.clone(),
+            8,
+        );
+        let mut encoded_request = Vec::new();
+        request.encode(&mut encoded_request).unwrap();
+
+        let decoded = WritePropertyRequest::decode(&encoded_request).unwrap();
+        assert_eq!(decoded.property_value, encoded_value);
+        assert_eq!(decoded.priority, Some(8));
     }
 
     #[test]
