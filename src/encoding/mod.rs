@@ -709,7 +709,13 @@ pub fn decode_enumerated(data: &[u8]) -> Result<(u32, usize)> {
 /// Encode a BACnet date
 pub fn encode_date(buffer: &mut Vec<u8>, year: u16, month: u8, day: u8, weekday: u8) -> Result<()> {
     encode_application_tag(buffer, ApplicationTag::Date, 4);
-    buffer.push(((year - 1900) % 256) as u8);
+    if year == 255 {
+        buffer.push(255);
+    } else if (1900..=2154).contains(&year) {
+        buffer.push((year - 1900) as u8);
+    } else {
+        return Err(EncodingError::ValueOutOfRange);
+    }
     buffer.push(month);
     buffer.push(day);
     buffer.push(weekday);
@@ -1064,6 +1070,8 @@ impl TryFrom<u8> for ApplicationTag {
             10 => Ok(ApplicationTag::Date),
             11 => Ok(ApplicationTag::Time),
             12 => Ok(ApplicationTag::ObjectIdentifier),
+            13 => Ok(ApplicationTag::Reserved13),
+            14 => Ok(ApplicationTag::Reserved14),
             _ => Err(EncodingError::InvalidTag),
         }
     }

@@ -19,6 +19,8 @@ use transaction::InvokeIdAllocator;
 
 #[cfg(feature = "std")]
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+#[cfg(feature = "async")]
+use std::sync::Arc;
 #[cfg(feature = "std")]
 use std::time::{Duration, Instant};
 
@@ -28,15 +30,15 @@ use alloc::{collections::BTreeMap as HashMap, string::String, vec::Vec};
 use crate::{
     app::{Apdu, MaxApduSize, MaxSegments},
     datalink::bip::BACNET_IP_PORT,
-    encoding::decode_object_identifier,
     network::{NetworkAddress, NetworkLayerMessage, NetworkMessageType, Npdu},
     object::{EngineeringUnits, ObjectIdentifier, ObjectType, PropertyIdentifier, Segmentation},
     property::{encode_property_value, PropertyValue},
     service::{
-        ConfirmedServiceChoice, IAmRequest, PropertyReference, PropertyResultValue,
-        ReadAccessResult, ReadAccessSpecification, ReadPropertyMultipleRequest,
-        ReadPropertyMultipleResponse, ReadPropertyRequest, ReadPropertyResponse,
-        UnconfirmedServiceChoice, WhoIsRequest, WritePropertyRequest,
+        AbortReason, ConfirmedServiceChoice, IAmRequest, PropertyReference, PropertyResult,
+        PropertyResultValue, ReadAccessResult, ReadAccessSpecification,
+        ReadPropertyMultipleRequest, ReadPropertyMultipleResponse, ReadPropertyRequest,
+        ReadPropertyResponse, RejectReason, UnconfirmedServiceChoice, WhoIsRequest,
+        WritePropertyRequest,
     },
 };
 
@@ -44,15 +46,21 @@ use crate::{
 const BVLC_ORIGINAL_UNICAST: u8 = 0x0A;
 /// BVLC function code: Original-Broadcast-NPDU (local subnet broadcast).
 const BVLC_ORIGINAL_BROADCAST: u8 = 0x0B;
+/// Initial number of array indexes requested in one ReadPropertyMultiple call.
+const DEFAULT_ARRAY_RPM_BATCH_SIZE: usize = 32;
+/// Initial number of properties requested in one ReadPropertyMultiple call.
+const DEFAULT_PROPERTY_RPM_BATCH_SIZE: usize = 16;
+/// BACnet error code for `optional-functionality-not-supported`.
+const ERROR_CODE_OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED: u32 = 45;
+/// BACnet error code for `unknown-property`.
+const ERROR_CODE_UNKNOWN_PROPERTY: u32 = 32;
 
 /// High-level BACnet client for device communication
 #[cfg(feature = "std")]
 pub struct BacnetClient {
     socket: UdpSocket,
     timeout: Duration,
-    /// Number of retries after an initial timeout (reserved for future use by
-    /// the request paths; not yet applied by the existing methods).
-    #[allow(dead_code)]
+    /// Number of retries after an initial timeout.
     retries: u8,
     /// Allocates invoke IDs for confirmed-request transactions.
     invoke_ids: InvokeIdAllocator,
@@ -152,6 +160,33 @@ pub struct ObjectInfo {
     pub status_flags: Option<Vec<bool>>,
 }
 
+/// Complete best-effort property snapshot for one BACnet object.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectSnapshot {
+    pub object_identifier: ObjectIdentifier,
+    pub properties: Vec<PropertyReadResult>,
+}
+
+/// Value or BACnet property-level error returned for one property.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PropertyReadResult {
+    pub property_identifier: PropertyIdentifier,
+    pub outcome: PropertyReadOutcome,
+}
+
+/// Outcome of reading an individual property in an object snapshot.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropertyReadOutcome {
+    Value(Vec<PropertyValue>),
+    Error {
+        class: u32,
+        code: u32,
+    },
+    /// The property responded, but its value encoding is not yet supported by
+    /// the generic decoder.
+    DecodeError(String),
+}
+
 /// Result of a verified write (see [`BacnetClient::write_property_verified`]).
 ///
 /// A BACnet `SimpleAck` only confirms the device *accepted* the WriteProperty
@@ -170,6 +205,12 @@ pub enum WriteOutcome {
         read_back: PropertyValue,
     },
 }
+
+/// Asynchronous stream returned by
+/// [`BacnetClient::read_object_list_stream`].
+#[cfg(feature = "async")]
+pub type ObjectListStream =
+    tokio_stream::wrappers::ReceiverStream<Result<ObjectIdentifier, ClientError>>;
 
 #[cfg(feature = "std")]
 impl BacnetClient {
@@ -380,7 +421,13 @@ impl BacnetClient {
         self.collect_iam_responses()
     }
 
-    /// Read the device's object list
+    /// Reliably read the device's complete Object_List.
+    ///
+    /// The client first requests the complete array. If that is too large or
+    /// times out, it reads index zero to obtain the array length and requests
+    /// indexed elements in adaptive ReadPropertyMultiple batches. Devices
+    /// without RPM support are handled with individual ReadProperty requests.
+    /// The Device object is retained because it is part of the BACnet array.
     pub fn read_object_list<T>(
         &self,
         target: T,
@@ -391,71 +438,364 @@ impl BacnetClient {
     {
         let target = target.into();
         let device_object = ObjectIdentifier::new(ObjectType::Device, device_id);
-        let property_ref = PropertyReference::new(PropertyIdentifier::ObjectList); // Object_List property
-        let read_spec = ReadAccessSpecification::new(device_object, vec![property_ref]);
-        let rpm_request = ReadPropertyMultipleRequest::new(vec![read_spec]);
-
-        let response_data = self.send_confirmed_request(
-            &target,
-            ConfirmedServiceChoice::ReadPropertyMultiple,
-            &self.encode_rpm_request(&rpm_request)?,
-        )?;
-
-        // The Object_List property comes back as a list of object identifiers
-        // inside the ReadPropertyMultiple result. Prefer the structured decoder;
-        // the device object itself is dropped.
         let mut objects = Vec::new();
-        if let Ok(response) = ReadPropertyMultipleResponse::decode(&response_data) {
-            for access in response.read_access_results {
-                for result in access.results {
-                    if let PropertyResultValue::Value(values) = result.value {
-                        for value in values {
-                            if let PropertyValue::ObjectIdentifier(oid) = value {
-                                if oid.object_type != ObjectType::Device {
-                                    objects.push(oid);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Backstop: if the structured decode produced nothing (e.g. an encoding
-        // variant it doesn't yet fully handle), scan the raw response for object
-        // identifiers so discovery still works.
-        if objects.is_empty() {
-            objects = Self::scan_object_identifiers(&response_data);
-        }
+        self.read_array_into(
+            &target,
+            device_object,
+            PropertyIdentifier::ObjectList,
+            |value| {
+                objects.push(decode_object_list_value(value)?);
+                Ok(())
+            },
+        )?;
 
         Ok(objects)
     }
 
-    /// Scan a raw response buffer for application-tagged object identifiers
-    /// (tag `0xC4`), skipping the device object. Used as a fallback when the
-    /// structured ReadPropertyMultiple decoder yields nothing.
-    fn scan_object_identifiers(data: &[u8]) -> Vec<ObjectIdentifier> {
-        let mut objects = Vec::new();
-        let mut pos = 0;
+    /// Stream the complete Object_List as values become available.
+    ///
+    /// This uses the same complete/RPM/individual fallback engine as
+    /// [`read_object_list`](Self::read_object_list). The current client socket
+    /// is synchronous, so the work runs on Tokio's blocking pool and sends
+    /// decoded identifiers through a bounded channel. Do not run any other
+    /// receive-oriented operation on the same client concurrently; the planned
+    /// shared async endpoint will remove that restriction.
+    #[cfg(feature = "async")]
+    pub fn read_object_list_stream<T>(
+        self: &Arc<Self>,
+        target: T,
+        device_id: u32,
+    ) -> ObjectListStream
+    where
+        T: Into<BacnetTarget>,
+    {
+        let target = target.into();
+        let client = Arc::clone(self);
+        let (sender, receiver) = tokio::sync::mpsc::channel(32);
 
-        while pos < data.len() {
-            // 0xC4 is the application tag for a 4-byte object identifier.
-            if data[pos] == 0xC4 {
-                match decode_object_identifier(&data[pos..]) {
-                    Ok((identifier, consumed)) => {
-                        if identifier.object_type != ObjectType::Device {
-                            objects.push(identifier);
+        tokio::task::spawn_blocking(move || {
+            let device_object = ObjectIdentifier::new(ObjectType::Device, device_id);
+            let result = client.read_array_into(
+                &target,
+                device_object,
+                PropertyIdentifier::ObjectList,
+                |value| {
+                    let identifier = decode_object_list_value(value)?;
+                    sender
+                        .blocking_send(Ok(identifier))
+                        .map_err(|_| ClientError::NoResponse)
+                },
+            );
+            if let Err(error) = result {
+                let _ = sender.blocking_send(Err(error));
+            }
+        });
+
+        tokio_stream::wrappers::ReceiverStream::new(receiver)
+    }
+
+    /// Read a BACnet array using complete, batched-RPM, and individual-index
+    /// strategies. Values are emitted in array-index order.
+    pub fn read_array<T>(
+        &self,
+        target: T,
+        object: ObjectIdentifier,
+        property: PropertyIdentifier,
+    ) -> Result<Vec<PropertyValue>, ClientError>
+    where
+        T: Into<BacnetTarget>,
+    {
+        let target = target.into();
+        let mut values = Vec::new();
+        self.read_array_into(&target, object, property, |value| {
+            values.push(value);
+            Ok(())
+        })?;
+        Ok(values)
+    }
+
+    fn read_array_into<F>(
+        &self,
+        target: &BacnetTarget,
+        object: ObjectIdentifier,
+        property: PropertyIdentifier,
+        mut emit: F,
+    ) -> Result<(), ClientError>
+    where
+        F: FnMut(PropertyValue) -> Result<(), ClientError>,
+    {
+        match self.read_property_response(target, object, property, None) {
+            Ok(response) => {
+                for value in response.property_values {
+                    emit(value)?;
+                }
+                return Ok(());
+            }
+            Err(error) if array_complete_read_can_fallback(&error) => {}
+            Err(error) => return Err(error),
+        }
+
+        let length_response = self.read_property_response(target, object, property, Some(0))?;
+        let length = decode_array_length(&length_response.property_values)?;
+        if length == 0 {
+            return Ok(());
+        }
+
+        let mut first_index = 1_u32;
+        let mut batch_size = DEFAULT_ARRAY_RPM_BATCH_SIZE.min(length as usize);
+        let mut use_rpm = true;
+
+        while first_index <= length {
+            if use_rpm {
+                let remaining = (length - first_index + 1) as usize;
+                let count = batch_size.min(remaining);
+                match self.read_array_rpm_batch(target, object, property, first_index, count) {
+                    Ok(values) => {
+                        for value in values {
+                            emit(value)?;
                         }
-                        pos += consumed;
+                        first_index += count as u32;
                     }
-                    Err(_) => pos += 1,
+                    Err(error) if rpm_is_unavailable(&error) => use_rpm = false,
+                    Err(error) if rpm_batch_can_shrink(&error) && count > 1 => {
+                        batch_size = (count / 2).max(1);
+                    }
+                    Err(error) if rpm_batch_can_shrink(&error) => use_rpm = false,
+                    Err(error) => return Err(error),
                 }
             } else {
-                pos += 1;
+                let response =
+                    self.read_property_response(target, object, property, Some(first_index))?;
+                if response.property_values.is_empty() {
+                    return Err(ClientError::Decode(format!(
+                        "array index {first_index} returned no value"
+                    )));
+                }
+                for value in response.property_values {
+                    emit(value)?;
+                }
+                first_index += 1;
             }
         }
 
-        objects
+        Ok(())
+    }
+
+    fn read_array_rpm_batch(
+        &self,
+        target: &BacnetTarget,
+        object: ObjectIdentifier,
+        property: PropertyIdentifier,
+        first_index: u32,
+        count: usize,
+    ) -> Result<Vec<PropertyValue>, ClientError> {
+        let references = (first_index..first_index + count as u32)
+            .map(|index| PropertyReference::with_array_index(property, index))
+            .collect();
+        let request = ReadPropertyMultipleRequest::new(vec![ReadAccessSpecification::new(
+            object, references,
+        )]);
+        let response_data = self.send_confirmed_request(
+            target,
+            ConfirmedServiceChoice::ReadPropertyMultiple,
+            &self.encode_rpm_request(&request)?,
+        )?;
+        let response = ReadPropertyMultipleResponse::decode(&response_data)?;
+        let mut results = response
+            .read_access_results
+            .into_iter()
+            .filter(|access| access.object_identifier == object)
+            .flat_map(|access| access.results)
+            .collect::<Vec<_>>();
+        let mut values = Vec::with_capacity(count);
+
+        for index in first_index..first_index + count as u32 {
+            let position = results
+                .iter()
+                .position(|result| {
+                    result.property_identifier == property && result.array_index == Some(index)
+                })
+                .ok_or_else(|| {
+                    ClientError::Decode(format!(
+                        "RPM response omitted array index {index} for {property:?}"
+                    ))
+                })?;
+            let result = results.remove(position);
+            match result.value {
+                PropertyResultValue::Value(index_values) if index_values.is_empty() => {
+                    return Err(ClientError::Decode(format!(
+                        "array index {index} returned no value"
+                    )))
+                }
+                PropertyResultValue::Value(index_values) => values.extend(index_values),
+                PropertyResultValue::Error(class, code) => {
+                    return Err(ClientError::PropertyError { class, code })
+                }
+            }
+        }
+
+        Ok(values)
+    }
+
+    /// Read every property exposed by an object.
+    ///
+    /// The client first asks ReadPropertyMultiple for `ALL`. If that request is
+    /// unsupported or too large, it reads `Property_List` and fetches the
+    /// advertised properties in adaptive RPM batches. Devices without RPM are
+    /// handled with individual ReadProperty calls. BACnet errors for individual
+    /// properties are retained in the snapshot rather than failing the object.
+    pub fn read_object_properties<T>(
+        &self,
+        target: T,
+        object: ObjectIdentifier,
+    ) -> Result<ObjectSnapshot, ClientError>
+    where
+        T: Into<BacnetTarget>,
+    {
+        let target = target.into();
+
+        match self.read_all_properties_rpm(&target, object) {
+            Ok(properties) if !all_result_requests_fallback(&properties) => {
+                return Ok(ObjectSnapshot {
+                    object_identifier: object,
+                    properties,
+                });
+            }
+            Ok(_) => {}
+            Err(error) if all_properties_can_fallback(&error) => {}
+            Err(error) => return Err(error),
+        }
+
+        let property_values = self.read_array(&target, object, PropertyIdentifier::PropertyList)?;
+        let properties = decode_property_list(property_values)?;
+        let properties = include_implicit_properties(properties);
+        let properties = self.read_known_properties(&target, object, &properties)?;
+
+        Ok(ObjectSnapshot {
+            object_identifier: object,
+            properties,
+        })
+    }
+
+    fn read_all_properties_rpm(
+        &self,
+        target: &BacnetTarget,
+        object: ObjectIdentifier,
+    ) -> Result<Vec<PropertyReadResult>, ClientError> {
+        let request = ReadPropertyMultipleRequest::new(vec![ReadAccessSpecification::new(
+            object,
+            vec![PropertyReference::new(PropertyIdentifier::All)],
+        )]);
+        let response_data = self.send_confirmed_request(
+            target,
+            ConfirmedServiceChoice::ReadPropertyMultiple,
+            &self.encode_rpm_request(&request)?,
+        )?;
+        let response = ReadPropertyMultipleResponse::decode(&response_data)?;
+        let access = response
+            .read_access_results
+            .into_iter()
+            .find(|access| access.object_identifier == object)
+            .ok_or_else(|| ClientError::Decode(format!("RPM response omitted {object:?}")))?;
+
+        Ok(access
+            .results
+            .into_iter()
+            .map(property_read_result)
+            .collect())
+    }
+
+    fn read_known_properties(
+        &self,
+        target: &BacnetTarget,
+        object: ObjectIdentifier,
+        properties: &[PropertyIdentifier],
+    ) -> Result<Vec<PropertyReadResult>, ClientError> {
+        let mut first = 0;
+        let mut batch_size = DEFAULT_PROPERTY_RPM_BATCH_SIZE.min(properties.len());
+        let mut use_rpm = true;
+        let mut results = Vec::with_capacity(properties.len());
+
+        while first < properties.len() {
+            if use_rpm {
+                let count = batch_size.min(properties.len() - first);
+                let batch = &properties[first..first + count];
+                match self.read_properties_rpm_batch(target, object, batch) {
+                    Ok(batch_results) => {
+                        results.extend(batch_results);
+                        first += count;
+                    }
+                    Err(error) if rpm_is_unavailable(&error) => use_rpm = false,
+                    Err(error) if rpm_batch_can_shrink(&error) && count > 1 => {
+                        batch_size = (count / 2).max(1);
+                    }
+                    Err(error) if rpm_batch_can_shrink(&error) => use_rpm = false,
+                    Err(error) => return Err(error),
+                }
+            } else {
+                let property = properties[first];
+                let outcome = match self.read_property(target, object, property) {
+                    Ok(values) => PropertyReadOutcome::Value(values),
+                    Err(ClientError::PropertyError { class, code }) => {
+                        PropertyReadOutcome::Error { class, code }
+                    }
+                    Err(error @ (ClientError::Encoding(_) | ClientError::Decode(_))) => {
+                        PropertyReadOutcome::DecodeError(error.to_string())
+                    }
+                    Err(error) => return Err(error),
+                };
+                results.push(PropertyReadResult {
+                    property_identifier: property,
+                    outcome,
+                });
+                first += 1;
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn read_properties_rpm_batch(
+        &self,
+        target: &BacnetTarget,
+        object: ObjectIdentifier,
+        properties: &[PropertyIdentifier],
+    ) -> Result<Vec<PropertyReadResult>, ClientError> {
+        let references = properties
+            .iter()
+            .copied()
+            .map(PropertyReference::new)
+            .collect();
+        let request = ReadPropertyMultipleRequest::new(vec![ReadAccessSpecification::new(
+            object, references,
+        )]);
+        let response_data = self.send_confirmed_request(
+            target,
+            ConfirmedServiceChoice::ReadPropertyMultiple,
+            &self.encode_rpm_request(&request)?,
+        )?;
+        let response = ReadPropertyMultipleResponse::decode(&response_data)?;
+        let mut results = response
+            .read_access_results
+            .into_iter()
+            .find(|access| access.object_identifier == object)
+            .ok_or_else(|| ClientError::Decode(format!("RPM response omitted {object:?}")))?
+            .results;
+        let mut ordered = Vec::with_capacity(properties.len());
+
+        for property in properties {
+            let position = results
+                .iter()
+                .position(|result| {
+                    result.property_identifier == *property && result.array_index.is_none()
+                })
+                .ok_or_else(|| {
+                    ClientError::Decode(format!("RPM response omitted {property:?} for {object:?}"))
+                })?;
+            ordered.push(property_read_result(results.remove(position)));
+        }
+
+        Ok(ordered)
     }
 
     /// Read properties for multiple objects
@@ -581,17 +921,41 @@ impl BacnetClient {
         T: Into<BacnetTarget>,
     {
         let target = target.into();
-        let request = ReadPropertyRequest::new(object, property);
+        Ok(self
+            .read_property_response(&target, object, property, None)?
+            .property_values)
+    }
+
+    fn read_property_response(
+        &self,
+        target: &BacnetTarget,
+        object: ObjectIdentifier,
+        property: PropertyIdentifier,
+        array_index: Option<u32>,
+    ) -> Result<ReadPropertyResponse, ClientError> {
+        let request = match array_index {
+            Some(index) => ReadPropertyRequest::with_array_index(object, property, index),
+            None => ReadPropertyRequest::new(object, property),
+        };
         let mut service_data = Vec::new();
         request.encode(&mut service_data)?;
 
         let response_data = self.send_confirmed_request(
-            &target,
+            target,
             ConfirmedServiceChoice::ReadProperty,
             &service_data,
         )?;
+        let response = ReadPropertyResponse::decode(&response_data)?;
+        if response.object_identifier != object
+            || response.property_identifier != property
+            || response.property_array_index != array_index
+        {
+            return Err(ClientError::Decode(format!(
+                "ReadProperty response did not match {object:?} {property:?}[{array_index:?}]"
+            )));
+        }
 
-        Ok(ReadPropertyResponse::decode(&response_data)?.property_values)
+        Ok(response)
     }
 
     /// Write a single property of an object.
@@ -901,37 +1265,36 @@ impl BacnetClient {
         let apdu_data = apdu.encode();
         let bvlc_message = self.create_confirmed_frame(target, &apdu_data);
 
-        self.socket.send_to(&bvlc_message, target.address)?;
-
-        // Wait for response
         let mut recv_buffer = [0u8; 1500];
-        let start_time = Instant::now();
+        for _attempt in 0..=self.retries {
+            self.socket.send_to(&bvlc_message, target.address)?;
+            let start_time = Instant::now();
 
-        while start_time.elapsed() < self.timeout {
-            match self.socket.recv_from(&mut recv_buffer) {
-                Ok((len, source)) => {
-                    if source == target.address {
-                        // A matching Error/Reject/Abort surfaces as Err here; an
-                        // unrelated frame yields None so we keep waiting.
-                        if let Some(response_data) =
-                            self.interpret_confirmed_response(&recv_buffer[..len], invoke_id)?
-                        {
-                            return Ok(response_data);
+            while start_time.elapsed() < self.timeout {
+                match self.socket.recv_from(&mut recv_buffer) {
+                    Ok((len, source)) => {
+                        if source == target.address {
+                            // A matching Error/Reject/Abort surfaces as Err here; an
+                            // unrelated frame yields None so we keep waiting.
+                            if let Some(response_data) =
+                                self.interpret_confirmed_response(&recv_buffer[..len], invoke_id)?
+                            {
+                                return Ok(response_data);
+                            }
                         }
                     }
+                    // A per-recv socket timeout is WouldBlock on Unix and TimedOut
+                    // on Windows; both mean this attempt received nothing useful.
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        break
+                    }
+                    Err(e) => return Err(e.into()),
                 }
-                // A per-recv socket timeout is WouldBlock on Unix and TimedOut
-                // on Windows; both mean "nothing yet", so keep waiting until our
-                // own deadline elapses.
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    continue
-                }
-                Err(e) => return Err(e.into()),
             }
         }
 
@@ -1179,6 +1542,159 @@ impl BacnetClient {
 
         info
     }
+}
+
+#[cfg(feature = "std")]
+fn property_read_result(result: PropertyResult) -> PropertyReadResult {
+    let outcome = match result.value {
+        PropertyResultValue::Value(values) => PropertyReadOutcome::Value(values),
+        PropertyResultValue::Error(class, code) => PropertyReadOutcome::Error { class, code },
+    };
+    PropertyReadResult {
+        property_identifier: result.property_identifier,
+        outcome,
+    }
+}
+
+#[cfg(feature = "std")]
+fn all_result_requests_fallback(properties: &[PropertyReadResult]) -> bool {
+    properties.is_empty()
+        || properties
+            .iter()
+            .any(|result| result.property_identifier == PropertyIdentifier::All)
+}
+
+#[cfg(feature = "std")]
+fn all_properties_can_fallback(error: &ClientError) -> bool {
+    rpm_is_unavailable(error)
+        || rpm_batch_can_shrink(error)
+        || matches!(
+            error,
+            ClientError::PropertyError {
+                code: ERROR_CODE_UNKNOWN_PROPERTY | ERROR_CODE_OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED,
+                ..
+            }
+        )
+}
+
+#[cfg(feature = "std")]
+fn decode_property_list(
+    values: Vec<PropertyValue>,
+) -> Result<Vec<PropertyIdentifier>, ClientError> {
+    fn append(
+        value: PropertyValue,
+        properties: &mut Vec<PropertyIdentifier>,
+    ) -> Result<(), ClientError> {
+        match value {
+            PropertyValue::Enumerated(identifier) => {
+                properties.push(PropertyIdentifier::from(identifier));
+                Ok(())
+            }
+            PropertyValue::Array(values) | PropertyValue::List(values) => {
+                for value in values {
+                    append(value, properties)?;
+                }
+                Ok(())
+            }
+            value => Err(ClientError::Decode(format!(
+                "Property_List contained {value:?} instead of an enumerated property identifier"
+            ))),
+        }
+    }
+
+    let mut properties = Vec::new();
+    for value in values {
+        append(value, &mut properties)?;
+    }
+    Ok(properties)
+}
+
+#[cfg(feature = "std")]
+fn include_implicit_properties(properties: Vec<PropertyIdentifier>) -> Vec<PropertyIdentifier> {
+    let mut complete = vec![
+        PropertyIdentifier::ObjectIdentifier,
+        PropertyIdentifier::ObjectName,
+        PropertyIdentifier::ObjectType,
+        PropertyIdentifier::PropertyList,
+    ];
+    for property in properties {
+        if !matches!(
+            property,
+            PropertyIdentifier::All | PropertyIdentifier::Required | PropertyIdentifier::Optional
+        ) && !complete.contains(&property)
+        {
+            complete.push(property);
+        }
+    }
+    complete
+}
+
+#[cfg(feature = "std")]
+fn decode_array_length(values: &[PropertyValue]) -> Result<u32, ClientError> {
+    match values {
+        [PropertyValue::Unsigned(length)] => (*length).try_into().map_err(|_| {
+            ClientError::Decode(format!("BACnet array length {length} does not fit in u32"))
+        }),
+        _ => Err(ClientError::Decode(format!(
+            "array index zero returned {values:?} instead of one unsigned length"
+        ))),
+    }
+}
+
+#[cfg(feature = "std")]
+fn decode_object_list_value(value: PropertyValue) -> Result<ObjectIdentifier, ClientError> {
+    match value {
+        PropertyValue::ObjectIdentifier(identifier) => Ok(identifier),
+        value => Err(ClientError::Decode(format!(
+            "Object_List contained {value:?} instead of an object identifier"
+        ))),
+    }
+}
+
+#[cfg(feature = "std")]
+fn array_complete_read_can_fallback(error: &ClientError) -> bool {
+    matches!(
+        error,
+        ClientError::Timeout
+            | ClientError::NoResponse
+            | ClientError::Encoding(_)
+            | ClientError::Decode(_)
+            | ClientError::Abort(
+                AbortReason::BufferOverflow
+                    | AbortReason::SegmentationNotSupported
+                    | AbortReason::OutOfResources
+                    | AbortReason::ApduTooLong
+            )
+    )
+}
+
+#[cfg(feature = "std")]
+fn rpm_is_unavailable(error: &ClientError) -> bool {
+    matches!(
+        error,
+        ClientError::Rejected(RejectReason::UnrecognizedService)
+            | ClientError::PropertyError {
+                code: ERROR_CODE_OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED,
+                ..
+            }
+    )
+}
+
+#[cfg(feature = "std")]
+fn rpm_batch_can_shrink(error: &ClientError) -> bool {
+    matches!(
+        error,
+        ClientError::Timeout
+            | ClientError::NoResponse
+            | ClientError::Encoding(_)
+            | ClientError::Decode(_)
+            | ClientError::Abort(
+                AbortReason::BufferOverflow
+                    | AbortReason::SegmentationNotSupported
+                    | AbortReason::OutOfResources
+                    | AbortReason::ApduTooLong
+            )
+    )
 }
 
 /// Compare a written value against a read-back value when verifying a write,

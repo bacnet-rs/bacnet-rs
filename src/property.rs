@@ -25,6 +25,13 @@ use crate::{
     ApplicationTag,
 };
 
+pub mod complex;
+pub use complex::{
+    AddressBindingValue, BacnetAddress, CovSubscriptionValue, DailyScheduleValue, DestinationValue,
+    ObjectPropertyReference, Recipient, RecipientProcess, TimeValueValue, TimestampValue,
+    ValueSourceValue,
+};
+
 /// Decoded BACnet property value
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +64,20 @@ pub enum PropertyValue {
     Array(Vec<PropertyValue>),
     /// An ordered list of property values.
     List(Vec<PropertyValue>),
+    /// BACnetCOVSubscription constructed value.
+    CovSubscription(CovSubscriptionValue),
+    /// BACnetAddressBinding composite value.
+    AddressBinding(AddressBindingValue),
+    /// BACnetTimeStamp choice.
+    Timestamp(TimestampValue),
+    /// BACnetObjectPropertyReference composite value.
+    ObjectPropertyReference(ObjectPropertyReference),
+    /// BACnetDestination composite value.
+    Destination(DestinationValue),
+    /// BACnetDailySchedule composite value.
+    DailySchedule(DailyScheduleValue),
+    /// BACnetValueSource choice.
+    ValueSource(ValueSourceValue),
     /// Null value
     Null,
     /// Unknown/unsupported value type
@@ -95,6 +116,13 @@ impl PropertyValue {
             }
             PropertyValue::Array(values) => format_collection("Array", values),
             PropertyValue::List(values) => format_collection("List", values),
+            PropertyValue::CovSubscription(value) => format!("{value:?}"),
+            PropertyValue::AddressBinding(value) => format!("{value:?}"),
+            PropertyValue::Timestamp(value) => format!("{value:?}"),
+            PropertyValue::ObjectPropertyReference(value) => format!("{value:?}"),
+            PropertyValue::Destination(value) => format!("{value:?}"),
+            PropertyValue::DailySchedule(value) => format!("{value:?}"),
+            PropertyValue::ValueSource(value) => format!("{value:?}"),
             PropertyValue::Null => "Null".to_string(),
             PropertyValue::Unknown(_) => "Unknown".to_string(),
         }
@@ -208,8 +236,16 @@ pub fn decode_property_value(data: &[u8]) -> Result<(PropertyValue, usize), Enco
             Ok((PropertyValue::ObjectIdentifier(value), consumed))
         }
         _ => {
-            // Unknown tag - return raw data
-            Ok((PropertyValue::Unknown(data.to_vec()), consumed + length))
+            // Preserve exactly this encoded value. Keeping the remainder would
+            // duplicate following values when the caller advances by
+            // `consumed + length`.
+            let value_length = consumed
+                .checked_add(length)
+                .ok_or(EncodingError::InvalidLength)?;
+            let raw = data
+                .get(..value_length)
+                .ok_or(EncodingError::BufferUnderflow)?;
+            Ok((PropertyValue::Unknown(raw.to_vec()), value_length))
         }
     }
 }
@@ -236,6 +272,13 @@ pub fn encode_property_value(
                 encode_property_value(value, buffer)?;
             }
         }
+        PropertyValue::CovSubscription(value) => value.encode(buffer)?,
+        PropertyValue::AddressBinding(value) => value.encode(buffer)?,
+        PropertyValue::Timestamp(value) => value.encode(buffer)?,
+        PropertyValue::ObjectPropertyReference(value) => value.encode(buffer)?,
+        PropertyValue::Destination(value) => value.encode(buffer)?,
+        PropertyValue::DailySchedule(value) => value.encode(buffer)?,
+        PropertyValue::ValueSource(value) => value.encode(buffer)?,
         PropertyValue::Null => encode_application_tag(buffer, ApplicationTag::Null, 0),
         PropertyValue::Unknown(data) => buffer.extend_from_slice(data),
     }
@@ -335,6 +378,20 @@ mod tests {
         } else {
             panic!("Expected ObjectIdentifier value");
         }
+    }
+
+    #[test]
+    fn unknown_application_value_preserves_only_its_own_bytes() {
+        let data = [0xD1, 0xAA, 0x21, 0x2A];
+
+        let (value, consumed) = decode_property_value(&data).unwrap();
+
+        assert_eq!(value, PropertyValue::Unknown(vec![0xD1, 0xAA]));
+        assert_eq!(consumed, 2);
+        assert_eq!(
+            decode_property_value(&data[consumed..]).unwrap(),
+            (PropertyValue::Unsigned(42), 2)
+        );
     }
 
     #[test]

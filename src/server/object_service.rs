@@ -6,7 +6,7 @@ use crate::{
         PropertyValue, Segmentation,
     },
     service::{
-        IAmRequest, PropertyReference, PropertyResult, ReadAccessResult,
+        ConfirmedServiceChoice, IAmRequest, PropertyReference, PropertyResult, ReadAccessResult,
         ReadPropertyMultipleRequest, ReadPropertyMultipleResponse, ReadPropertyRequest,
         ReadPropertyResponse, WritePropertyRequest,
     },
@@ -25,6 +25,23 @@ impl ObjectService {
 
     pub fn database(&self) -> &Arc<ObjectDatabase> {
         &self.database
+    }
+
+    pub fn supports_confirmed_service(&self, service: ConfirmedServiceChoice) -> bool {
+        match service {
+            ConfirmedServiceChoice::ReadProperty
+            | ConfirmedServiceChoice::ReadPropertyMultiple
+            | ConfirmedServiceChoice::WriteProperty => {}
+            _ => return false,
+        }
+        let device = self.database.get_device_id();
+
+        matches!(
+            self.database
+                .get_property(device, PropertyIdentifier::ProtocolServicesSupported),
+            Ok(PropertyValue::BitString(bits))
+                if bits.get(service as usize).copied().unwrap_or(false)
+        )
     }
 
     pub fn read_property(
@@ -171,14 +188,15 @@ impl ObjectService {
     ) -> Result<Vec<PropertyReference>, ObjectError> {
         let mut expanded = Vec::new();
         for reference in references {
-            if reference.property_identifier == PropertyIdentifier::All
-                && reference.property_array_index.is_none()
-            {
-                expanded.extend(
-                    self.properties_for(object_identifier)?
-                        .into_iter()
-                        .map(PropertyReference::new),
-                );
+            if reference.property_identifier == PropertyIdentifier::All {
+                let array_index = reference.property_array_index;
+                expanded.extend(self.properties_for(object_identifier)?.into_iter().map(
+                    |property| {
+                        let mut reference = PropertyReference::new(property);
+                        reference.property_array_index = array_index;
+                        reference
+                    },
+                ));
             } else {
                 expanded.push(reference.clone());
             }

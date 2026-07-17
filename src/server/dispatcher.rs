@@ -114,6 +114,10 @@ impl ServerDispatcher {
         service_choice: ConfirmedServiceChoice,
         service_data: &[u8],
     ) -> Result<Apdu, ServerError> {
+        if !self.objects.supports_confirmed_service(service_choice) {
+            return Ok(reject(invoke_id, RejectReason::UnrecognizedService));
+        }
+
         match service_choice {
             ConfirmedServiceChoice::ReadProperty => match ReadPropertyRequest::decode(service_data)
             {
@@ -350,6 +354,85 @@ mod tests {
         assert!(properties.contains(&PropertyIdentifier::PresentValue));
         assert!(properties.contains(&PropertyIdentifier::PriorityArray));
         assert!(properties.contains(&PropertyIdentifier::PropertyList));
+    }
+
+    #[test]
+    fn indexed_all_selector_exposes_properties_for_rp_fallback() {
+        let dispatcher = dispatcher_with_analog_values(1);
+        let object = ObjectIdentifier::new(ObjectType::AnalogValue, 1);
+        let request = ReadPropertyMultipleRequest::new(vec![ReadAccessSpecification::new(
+            object,
+            vec![PropertyReference::with_array_index(
+                PropertyIdentifier::All,
+                0,
+            )],
+        )]);
+        let mut service_data = Vec::new();
+        request.encode(&mut service_data).unwrap();
+
+        let response = dispatcher
+            .dispatch(
+                &Npdu::new(),
+                confirmed_request(
+                    ConfirmedServiceChoice::ReadPropertyMultiple,
+                    service_data,
+                    MaxApduSize::Up1476,
+                    false,
+                ),
+            )
+            .unwrap()
+            .unwrap();
+        let Apdu::ComplexAck { service_data, .. } = response.apdu else {
+            panic!("expected ReadPropertyMultiple complex acknowledgement")
+        };
+        let decoded = ReadPropertyMultipleResponse::decode(&service_data).unwrap();
+        let results = &decoded.read_access_results[0].results;
+
+        assert!(results.iter().all(|result| result.array_index == Some(0)));
+        assert!(results.iter().any(|result| {
+            result.property_identifier == PropertyIdentifier::PriorityArray
+                && result.value == PropertyResultValue::Value(vec![PropertyValue::Unsigned(16)])
+        }));
+        assert!(results.iter().any(|result| {
+            result.property_identifier == PropertyIdentifier::PresentValue
+                && result.value == PropertyResultValue::Error(2, 50)
+        }));
+    }
+
+    #[test]
+    fn services_disabled_by_the_hosted_device_are_rejected() {
+        let mut device = Device::new(1234, "RP-only device".to_string());
+        device.protocol_services_supported =
+            crate::object::ProtocolServicesSupported::READ_PROPERTY;
+        let database = Arc::new(ObjectDatabase::new(device));
+        let dispatcher = ServerDispatcher::new(ObjectService::new(database));
+        let request = ReadPropertyMultipleRequest::new(vec![ReadAccessSpecification::new(
+            ObjectIdentifier::new(ObjectType::Device, 1234),
+            vec![PropertyReference::new(PropertyIdentifier::ObjectName)],
+        )]);
+        let mut service_data = Vec::new();
+        request.encode(&mut service_data).unwrap();
+
+        let response = dispatcher
+            .dispatch(
+                &Npdu::new(),
+                confirmed_request(
+                    ConfirmedServiceChoice::ReadPropertyMultiple,
+                    service_data,
+                    MaxApduSize::Up1476,
+                    false,
+                ),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert!(matches!(
+            response.apdu,
+            Apdu::Reject {
+                invoke_id: 9,
+                reject_reason: RejectReason::UnrecognizedService,
+            }
+        ));
     }
 
     #[test]

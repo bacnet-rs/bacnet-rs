@@ -45,9 +45,6 @@ pub struct ClientConfig {
     /// How long to wait for a response before giving up.
     pub timeout: Duration,
     /// Number of times to retry a request after the first attempt times out.
-    ///
-    /// Currently stored for use by later request paths; the existing methods
-    /// do not yet retry.
     pub retries: u8,
 }
 

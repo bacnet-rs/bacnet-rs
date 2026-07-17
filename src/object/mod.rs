@@ -502,12 +502,14 @@ impl BacnetObject for Device {
             PropertyIdentifier::DeviceAddressBinding => Ok(PropertyValue::List(
                 self.device_address_binding
                     .iter()
-                    .flat_map(|binding| {
-                        [
-                            PropertyValue::ObjectIdentifier(binding.device_identifier),
-                            PropertyValue::Unsigned(binding.network_number.into()),
-                            PropertyValue::OctetString(binding.mac_address.clone()),
-                        ]
+                    .map(|binding| {
+                        PropertyValue::AddressBinding(crate::property::AddressBindingValue {
+                            device_identifier: binding.device_identifier,
+                            address: crate::property::BacnetAddress {
+                                network: binding.network_number,
+                                mac_address: binding.mac_address.clone(),
+                            },
+                        })
                     })
                     .collect(),
             )),
@@ -953,11 +955,15 @@ mod tests {
             device
                 .get_property(PropertyIdentifier::DeviceAddressBinding)
                 .unwrap(),
-            PropertyValue::List(vec![
-                PropertyValue::ObjectIdentifier(remote_device),
-                PropertyValue::Unsigned(416),
-                PropertyValue::OctetString(vec![192, 168, 1, 10, 0xBA, 0xC0]),
-            ])
+            PropertyValue::List(vec![PropertyValue::AddressBinding(
+                crate::property::AddressBindingValue {
+                    device_identifier: remote_device,
+                    address: crate::property::BacnetAddress {
+                        network: 416,
+                        mac_address: vec![192, 168, 1, 10, 0xBA, 0xC0],
+                    },
+                }
+            )])
         );
     }
 }

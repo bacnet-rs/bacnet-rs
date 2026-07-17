@@ -974,6 +974,49 @@ fn find_constructed_value_end(
     Err(EncodingError::InvalidTag)
 }
 
+fn decode_property_result_values(data: &[u8]) -> EncodingResult<Vec<PropertyValue>> {
+    let mut values = Vec::new();
+    let mut position = 0;
+
+    while position < data.len() {
+        let (tag, length, header_length) = decode_tag(&data[position..])?;
+        match tag {
+            BACnetTag::Application(_) => {
+                let (value, consumed) = decode_property_value(&data[position..])?;
+                position += consumed;
+                values.push(value);
+            }
+            BACnetTag::Context(tag_number) => {
+                let kind = data[position] & 0x07;
+                let end = match kind {
+                    6 => {
+                        let content_start = position
+                            .checked_add(header_length)
+                            .ok_or(EncodingError::InvalidLength)?;
+                        let closing = find_constructed_value_end(data, content_start, tag_number)?;
+                        let (_, _, closing_length) = decode_tag(&data[closing..])?;
+                        closing
+                            .checked_add(closing_length)
+                            .ok_or(EncodingError::InvalidLength)?
+                    }
+                    7 => return Err(EncodingError::InvalidTag),
+                    _ => position
+                        .checked_add(header_length)
+                        .and_then(|position| position.checked_add(length))
+                        .ok_or(EncodingError::InvalidLength)?,
+                };
+                let raw = data
+                    .get(position..end)
+                    .ok_or(EncodingError::BufferUnderflow)?;
+                values.push(PropertyValue::Unknown(raw.to_vec()));
+                position = end;
+            }
+        }
+    }
+
+    Ok(values)
+}
+
 /// Read Property Multiple request (confirmed service)
 #[derive(Debug, Clone)]
 pub struct ReadPropertyMultipleRequest {
@@ -1327,6 +1370,7 @@ impl PropertyResult {
 
     pub fn decode(bytes: &[u8]) -> EncodingResult<(Self, usize)> {
         let (property_identifier, consumed) = decode_context_enumerated(bytes, 2)?;
+        let property_identifier = PropertyIdentifier::from(property_identifier);
         let mut total_consumed = consumed;
 
         let (tag, _, _) = decode_tag(&bytes[total_consumed..])?;
@@ -1343,17 +1387,46 @@ impl PropertyResult {
         total_consumed += consumed;
 
         let value = if let BACnetTag::Context(4) = tag {
-            let (tag, _, _) = decode_tag(&bytes[total_consumed..])?;
-            let mut current_tag = tag;
-            let mut values = Vec::new();
-
-            while let BACnetTag::Application(_) = current_tag {
-                let (value, consumed) = decode_property_value(&bytes[total_consumed..])?;
-                values.push(value);
-                total_consumed += consumed;
-                let (tag, _, _) = decode_tag(&bytes[total_consumed..])?;
-                current_tag = tag;
-            }
+            let value_end = find_constructed_value_end(bytes, total_consumed, 4)?;
+            let encoded_values = &bytes[total_consumed..value_end];
+            let values = if property_identifier == PropertyIdentifier::ActiveCovSubscriptions {
+                crate::property::complex::decode_cov_subscriptions(encoded_values)
+                    .or_else(|_| decode_property_result_values(encoded_values))?
+            } else if property_identifier == PropertyIdentifier::DeviceAddressBinding {
+                crate::property::complex::decode_address_bindings(encoded_values)
+                    .or_else(|_| decode_property_result_values(encoded_values))?
+            } else if matches!(
+                property_identifier,
+                PropertyIdentifier::EventTimeStamps
+                    | PropertyIdentifier::CommandTimeArray
+                    | PropertyIdentifier::LastCommandTime
+            ) {
+                crate::property::complex::decode_timestamps(encoded_values)
+                    .or_else(|_| decode_property_result_values(encoded_values))?
+            } else if matches!(
+                property_identifier,
+                PropertyIdentifier::ListOfObjectPropertyReferences
+                    | PropertyIdentifier::EventAlgorithmInhibitRef
+                    | PropertyIdentifier::ObjectPropertyReference
+            ) {
+                crate::property::complex::decode_object_property_references(encoded_values)
+                    .or_else(|_| decode_property_result_values(encoded_values))?
+            } else if property_identifier == PropertyIdentifier::RecipientList {
+                crate::property::complex::decode_destinations(encoded_values)
+                    .or_else(|_| decode_property_result_values(encoded_values))?
+            } else if property_identifier == PropertyIdentifier::WeeklySchedule {
+                crate::property::complex::decode_weekly_schedule(encoded_values)
+                    .or_else(|_| decode_property_result_values(encoded_values))?
+            } else if matches!(
+                property_identifier,
+                PropertyIdentifier::ValueSource | PropertyIdentifier::ValueSourceArray
+            ) {
+                crate::property::complex::decode_value_sources(encoded_values)
+                    .or_else(|_| decode_property_result_values(encoded_values))?
+            } else {
+                decode_property_result_values(encoded_values)?
+            };
+            total_consumed = value_end;
             PropertyResultValue::Value(values)
         } else if let BACnetTag::Context(5) = tag {
             let (error_class, consumed) = decode_enumerated(&bytes[total_consumed..])?;
@@ -1378,7 +1451,7 @@ impl PropertyResult {
 
         Ok((
             Self {
-                property_identifier: property_identifier.into(),
+                property_identifier,
                 array_index,
                 value,
             },
@@ -2442,6 +2515,72 @@ mod tests {
             ReadPropertyMultipleResponse::decode(&encoded).unwrap(),
             response
         );
+    }
+
+    #[test]
+    fn rpm_response_preserves_unknown_constructed_values_and_continues() {
+        let object = ObjectIdentifier::new(ObjectType::Device, 1234);
+        let constructed = vec![
+            0x0E, // context 0 opening
+            0x19, 0x2A, // context 1 primitive
+            0x2E, // context 2 opening
+            0x21, 0x07, // application unsigned
+            0x2F, // context 2 closing
+            0x0F, // context 0 closing
+        ];
+        let response = ReadPropertyMultipleResponse::new(vec![ReadAccessResult::new(
+            object,
+            vec![
+                PropertyResult::value(
+                    PropertyIdentifier::ActiveCovSubscriptions,
+                    None,
+                    vec![PropertyValue::Unknown(constructed.clone())],
+                ),
+                PropertyResult::value(
+                    PropertyIdentifier::VendorIdentifier,
+                    None,
+                    vec![PropertyValue::Unsigned(710)],
+                ),
+            ],
+        )]);
+
+        let mut encoded = Vec::new();
+        response.encode(&mut encoded).unwrap();
+        let decoded = ReadPropertyMultipleResponse::decode(&encoded).unwrap();
+
+        assert_eq!(decoded, response);
+        assert_eq!(
+            decoded.read_access_results[0].results[0].value,
+            PropertyResultValue::Value(vec![PropertyValue::Unknown(constructed)])
+        );
+        assert_eq!(
+            decoded.read_access_results[0].results[1].value,
+            PropertyResultValue::Value(vec![PropertyValue::Unsigned(710)])
+        );
+    }
+
+    #[test]
+    fn rpm_response_rejects_unbalanced_constructed_values() {
+        let object = ObjectIdentifier::new(ObjectType::Device, 1234);
+        let response = ReadPropertyMultipleResponse::new(vec![ReadAccessResult::new(
+            object,
+            vec![PropertyResult::value(
+                PropertyIdentifier::ActiveCovSubscriptions,
+                None,
+                vec![PropertyValue::Unknown(vec![
+                    0x0E, // context 0 opening without its closing tag
+                    0x21, 0x07,
+                ])],
+            )],
+        )]);
+
+        let mut encoded = Vec::new();
+        response.encode(&mut encoded).unwrap();
+
+        assert!(matches!(
+            ReadPropertyMultipleResponse::decode(&encoded),
+            Err(EncodingError::InvalidTag)
+        ));
     }
 
     #[test]
