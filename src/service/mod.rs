@@ -978,6 +978,26 @@ impl ReadPropertyMultipleRequest {
 
         Ok(())
     }
+
+    pub fn decode(data: &[u8]) -> EncodingResult<Self> {
+        let mut read_access_specifications = Vec::new();
+        let mut consumed = 0;
+
+        while consumed < data.len() {
+            let (specification, specification_length) =
+                ReadAccessSpecification::decode(&data[consumed..])?;
+            consumed += specification_length;
+            read_access_specifications.push(specification);
+        }
+
+        if read_access_specifications.is_empty() {
+            return Err(EncodingError::InvalidLength);
+        }
+
+        Ok(Self {
+            read_access_specifications,
+        })
+    }
 }
 
 impl ReadAccessSpecification {
@@ -1013,6 +1033,41 @@ impl ReadAccessSpecification {
 
         Ok(())
     }
+
+    fn decode(data: &[u8]) -> EncodingResult<(Self, usize)> {
+        let (object_identifier, mut consumed) = decode_context_object_id(data, 0)?;
+        let (tag, kind, tag_length) = decode_context_tag(&data[consumed..])?;
+        if tag != 1 || kind != 6 {
+            return Err(EncodingError::InvalidTag);
+        }
+        consumed += tag_length;
+
+        let mut property_references = Vec::new();
+        loop {
+            let (tag, kind, _) = decode_context_tag(&data[consumed..])?;
+            if tag == 1 && kind == 7 {
+                consumed += 1;
+                break;
+            }
+
+            let (property_reference, property_length) =
+                PropertyReference::decode(&data[consumed..])?;
+            consumed += property_length;
+            property_references.push(property_reference);
+        }
+
+        if property_references.is_empty() {
+            return Err(EncodingError::InvalidLength);
+        }
+
+        Ok((
+            Self {
+                object_identifier,
+                property_references,
+            },
+            consumed,
+        ))
+    }
 }
 
 impl PropertyReference {
@@ -1043,14 +1098,52 @@ impl PropertyReference {
 
         Ok(())
     }
+
+    fn decode(data: &[u8]) -> EncodingResult<(Self, usize)> {
+        let (property_identifier, mut consumed) = decode_context_enumerated(data, 0)?;
+        let property_array_index = if consumed < data.len() {
+            let (tag, kind, _) = decode_context_tag(&data[consumed..])?;
+            if tag == 1 && kind != 7 {
+                let (array_index, array_index_length) =
+                    decode_context_unsigned(&data[consumed..], 1)?;
+                consumed += array_index_length;
+                Some(array_index)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok((
+            Self {
+                property_identifier: property_identifier.into(),
+                property_array_index,
+            },
+            consumed,
+        ))
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReadPropertyMultipleResponse {
     pub read_access_results: Vec<ReadAccessResult>,
 }
 
 impl ReadPropertyMultipleResponse {
+    pub fn new(read_access_results: Vec<ReadAccessResult>) -> Self {
+        Self {
+            read_access_results,
+        }
+    }
+
+    pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
+        for result in &self.read_access_results {
+            result.encode(buffer)?;
+        }
+        Ok(())
+    }
+
     pub fn decode(data: &[u8]) -> EncodingResult<Self> {
         let mut read_access_results = Vec::new();
 
@@ -1068,13 +1161,30 @@ impl ReadPropertyMultipleResponse {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReadAccessResult {
     pub object_identifier: ObjectIdentifier,
     pub results: Vec<PropertyResult>,
 }
 
 impl ReadAccessResult {
+    pub fn new(object_identifier: ObjectIdentifier, results: Vec<PropertyResult>) -> Self {
+        Self {
+            object_identifier,
+            results,
+        }
+    }
+
+    pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
+        buffer.extend_from_slice(&encode_context_object_id(self.object_identifier, 0)?);
+        crate::encoding::advanced::context::encode_opening_tag(buffer, 1)?;
+        for result in &self.results {
+            result.encode(buffer)?;
+        }
+        crate::encoding::advanced::context::encode_closing_tag(buffer, 1)?;
+        Ok(())
+    }
+
     pub fn decode(data: &[u8]) -> EncodingResult<(Self, usize)> {
         let mut total_consumed = 0;
         let mut results = Vec::new();
@@ -1116,7 +1226,7 @@ impl ReadAccessResult {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PropertyResult {
     pub property_identifier: PropertyIdentifier,
     pub array_index: Option<u32>,
@@ -1124,6 +1234,58 @@ pub struct PropertyResult {
 }
 
 impl PropertyResult {
+    pub fn value(
+        property_identifier: PropertyIdentifier,
+        array_index: Option<u32>,
+        values: Vec<property::PropertyValue>,
+    ) -> Self {
+        Self {
+            property_identifier,
+            array_index,
+            value: PropertyResultValue::Value(values),
+        }
+    }
+
+    pub fn error(
+        property_identifier: PropertyIdentifier,
+        array_index: Option<u32>,
+        error_class: u32,
+        error_code: u32,
+    ) -> Self {
+        Self {
+            property_identifier,
+            array_index,
+            value: PropertyResultValue::Error(error_class, error_code),
+        }
+    }
+
+    pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
+        buffer.extend_from_slice(&encode_context_enumerated(
+            self.property_identifier.into(),
+            2,
+        )?);
+        if let Some(array_index) = self.array_index {
+            buffer.extend_from_slice(&encode_context_unsigned(array_index, 3)?);
+        }
+
+        match &self.value {
+            PropertyResultValue::Value(values) => {
+                crate::encoding::advanced::context::encode_opening_tag(buffer, 4)?;
+                for value in values {
+                    crate::property::encode_property_value(value, buffer)?;
+                }
+                crate::encoding::advanced::context::encode_closing_tag(buffer, 4)?;
+            }
+            PropertyResultValue::Error(error_class, error_code) => {
+                crate::encoding::advanced::context::encode_opening_tag(buffer, 5)?;
+                encode_enumerated(buffer, *error_class);
+                encode_enumerated(buffer, *error_code);
+                crate::encoding::advanced::context::encode_closing_tag(buffer, 5)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn decode(bytes: &[u8]) -> EncodingResult<(Self, usize)> {
         let (property_identifier, consumed) = decode_context_enumerated(bytes, 2)?;
         let mut total_consumed = consumed;
@@ -2170,6 +2332,51 @@ mod tests {
         assert_eq!(
             rpm_request.read_access_specifications[1].property_references[0].property_array_index,
             Some(8)
+        );
+
+        let mut encoded = Vec::new();
+        rpm_request.encode(&mut encoded).unwrap();
+        let decoded = ReadPropertyMultipleRequest::decode(&encoded).unwrap();
+        assert_eq!(decoded.read_access_specifications.len(), 2);
+        assert_eq!(
+            decoded.read_access_specifications[0].object_identifier,
+            object_id1
+        );
+        assert_eq!(
+            decoded.read_access_specifications[0].property_references[1].property_identifier,
+            PropertyIdentifier::ObjectName
+        );
+        assert_eq!(
+            decoded.read_access_specifications[1].property_references[0].property_array_index,
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn test_read_property_multiple_response_roundtrip() {
+        let object = ObjectIdentifier::new(ObjectType::AnalogValue, 1);
+        let response = ReadPropertyMultipleResponse::new(vec![ReadAccessResult::new(
+            object,
+            vec![
+                PropertyResult::value(
+                    PropertyIdentifier::PresentValue,
+                    None,
+                    vec![property::PropertyValue::Real(21.5)],
+                ),
+                PropertyResult::error(PropertyIdentifier::Description, None, 2, 32),
+                PropertyResult::value(
+                    PropertyIdentifier::PriorityArray,
+                    Some(0),
+                    vec![property::PropertyValue::Unsigned(16)],
+                ),
+            ],
+        )]);
+
+        let mut encoded = Vec::new();
+        response.encode(&mut encoded).unwrap();
+        assert_eq!(
+            ReadPropertyMultipleResponse::decode(&encoded).unwrap(),
+            response
         );
     }
 

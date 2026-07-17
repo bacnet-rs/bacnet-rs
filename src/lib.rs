@@ -131,10 +131,15 @@ pub mod client;
 /// Property value decoders for various BACnet data types
 pub mod property;
 
+/// Hosted BACnet device services and BACnet/IP endpoint.
+#[cfg(feature = "std")]
+pub mod server;
+
 // Re-export main types for convenient access
 pub use datalink::{DataLink, DataLinkAddress, DataLinkType};
 pub use encoding::{ApplicationTag, EncodingError};
 pub use object::{BacnetObject, ObjectType, PropertyIdentifier};
+pub use property::{BacnetValue, PropertyValue};
 pub use service::{ConfirmedServiceChoice, ServiceError, UnconfirmedServiceChoice};
 pub use vendor::{format_vendor_display, get_vendor_info, get_vendor_name, VendorInfo};
 
