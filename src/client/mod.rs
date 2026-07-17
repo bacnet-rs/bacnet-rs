@@ -1,17 +1,23 @@
 //! BACnet Client Utilities
 //!
-//! This module provides high-level client utilities for common BACnet operations
-//! such as device discovery, object enumeration, and property reading.
+//! This module exposes BACnet protocol operations such as discovery,
+//! ReadProperty, ReadPropertyMultiple, and WriteProperty. Convenience methods
+//! that return typed results still issue one documented protocol transaction;
+//! fallback and retry strategies across different services belong to callers.
 //!
 //! The entry point is [`BacnetClient`]. Construct one with [`BacnetClient::new`]
 //! for defaults, or with [`BacnetClient::builder`] to customize the local
 //! interface, port, timeout, and retries. All methods return [`ClientError`] on
 //! failure.
 
+#[cfg(feature = "async")]
+mod async_client;
 mod config;
 mod error;
 mod transaction;
 
+#[cfg(feature = "async")]
+pub use async_client::AsyncBacnetClient;
 pub use config::{ClientBuilder, ClientConfig, DEFAULT_HOST, DEFAULT_TIMEOUT};
 pub use error::ClientError;
 
@@ -19,8 +25,6 @@ use transaction::InvokeIdAllocator;
 
 #[cfg(feature = "std")]
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
-#[cfg(feature = "async")]
-use std::sync::Arc;
 #[cfg(feature = "std")]
 use std::time::{Duration, Instant};
 
@@ -31,13 +35,12 @@ use crate::{
     app::{Apdu, MaxApduSize, MaxSegments},
     datalink::bip::BACNET_IP_PORT,
     network::{NetworkAddress, NetworkLayerMessage, NetworkMessageType, Npdu},
-    object::{EngineeringUnits, ObjectIdentifier, ObjectType, PropertyIdentifier, Segmentation},
+    object::{ObjectIdentifier, ObjectType, PropertyIdentifier, Segmentation},
     property::{encode_property_value, PropertyValue},
     service::{
-        AbortReason, ConfirmedServiceChoice, IAmRequest, PropertyReference, PropertyResult,
-        PropertyResultValue, ReadAccessResult, ReadAccessSpecification,
-        ReadPropertyMultipleRequest, ReadPropertyMultipleResponse, ReadPropertyRequest,
-        ReadPropertyResponse, RejectReason, UnconfirmedServiceChoice, WhoIsRequest,
+        ConfirmedServiceChoice, IAmRequest, PropertyReference, PropertyResult, PropertyResultValue,
+        ReadAccessSpecification, ReadPropertyMultipleRequest, ReadPropertyMultipleResponse,
+        ReadPropertyRequest, ReadPropertyResponse, UnconfirmedServiceChoice, WhoIsRequest,
         WritePropertyRequest,
     },
 };
@@ -46,15 +49,6 @@ use crate::{
 const BVLC_ORIGINAL_UNICAST: u8 = 0x0A;
 /// BVLC function code: Original-Broadcast-NPDU (local subnet broadcast).
 const BVLC_ORIGINAL_BROADCAST: u8 = 0x0B;
-/// Initial number of array indexes requested in one ReadPropertyMultiple call.
-const DEFAULT_ARRAY_RPM_BATCH_SIZE: usize = 32;
-/// Initial number of properties requested in one ReadPropertyMultiple call.
-const DEFAULT_PROPERTY_RPM_BATCH_SIZE: usize = 16;
-/// BACnet error code for `optional-functionality-not-supported`.
-const ERROR_CODE_OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED: u32 = 45;
-/// BACnet error code for `unknown-property`.
-const ERROR_CODE_UNKNOWN_PROPERTY: u32 = 32;
-
 /// High-level BACnet client for device communication
 #[cfg(feature = "std")]
 pub struct BacnetClient {
@@ -149,18 +143,7 @@ struct DecodedBacnetIpFrame<'a> {
     payload: &'a [u8],
 }
 
-/// Object information with common properties
-#[derive(Debug, Clone)]
-pub struct ObjectInfo {
-    pub object_identifier: ObjectIdentifier,
-    pub object_name: Option<String>,
-    pub description: Option<String>,
-    pub present_value: Option<PropertyValue>,
-    pub units: Option<EngineeringUnits>,
-    pub status_flags: Option<Vec<bool>>,
-}
-
-/// Complete best-effort property snapshot for one BACnet object.
+/// Decoded result of one RPM `ALL` request for a BACnet object.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObjectSnapshot {
     pub object_identifier: ObjectIdentifier,
@@ -186,31 +169,6 @@ pub enum PropertyReadOutcome {
     /// the generic decoder.
     DecodeError(String),
 }
-
-/// Result of a verified write (see [`BacnetClient::write_property_verified`]).
-///
-/// A BACnet `SimpleAck` only confirms the device *accepted* the WriteProperty
-/// request — not that the value became effective. For commandable objects the
-/// `Present_Value` is resolved from the priority array, so an accepted write can
-/// still be overridden by a higher-priority slot (or the property may not be
-/// commandable at the chosen priority). This type makes that difference visible.
-#[derive(Debug, Clone, PartialEq)]
-pub enum WriteOutcome {
-    /// The device acknowledged the write and a read-back confirms the value.
-    Verified,
-    /// The device acknowledged the write, but reading the property back shows a
-    /// different value — the write did not take effect.
-    NotEffective {
-        /// The value the property actually holds after the write.
-        read_back: PropertyValue,
-    },
-}
-
-/// Asynchronous stream returned by
-/// [`BacnetClient::read_object_list_stream`].
-#[cfg(feature = "async")]
-pub type ObjectListStream =
-    tokio_stream::wrappers::ReceiverStream<Result<ObjectIdentifier, ClientError>>;
 
 #[cfg(feature = "std")]
 impl BacnetClient {
@@ -274,7 +232,7 @@ impl BacnetClient {
 
         // Create and send message
         let message =
-            self.create_unconfirmed_message(UnconfirmedServiceChoice::WhoIs as u8, &buffer);
+            create_unconfirmed_frame(UnconfirmedServiceChoice::WhoIs as u8, &buffer, false);
         self.socket.send_to(&message, target_addr)?;
 
         // Wait for I-Am response
@@ -285,9 +243,7 @@ impl BacnetClient {
             match self.socket.recv_from(&mut recv_buffer) {
                 Ok((len, source)) => {
                     if source == target_addr {
-                        if let Some(device_info) =
-                            self.parse_iam_response(&recv_buffer[..len], source)
-                        {
+                        if let Some(device_info) = parse_iam_response(&recv_buffer[..len], source) {
                             return Ok(device_info);
                         }
                     }
@@ -349,7 +305,7 @@ impl BacnetClient {
     ) -> Result<Vec<DiscoveredRouter>, ClientError> {
         self.socket.set_broadcast(true)?;
         let frame =
-            self.create_who_is_router_frame(destination_network, is_broadcast_target(target_addr));
+            create_who_is_router_frame(destination_network, is_broadcast_target(target_addr));
         self.socket.send_to(&frame, target_addr)?;
         self.collect_router_responses()
     }
@@ -381,7 +337,7 @@ impl BacnetClient {
         let mut buffer = Vec::new();
         whois.encode(&mut buffer)?;
 
-        let message = self.create_unconfirmed_frame(
+        let message = create_unconfirmed_frame(
             UnconfirmedServiceChoice::WhoIs as u8,
             &buffer,
             is_broadcast_target(target_addr),
@@ -415,19 +371,17 @@ impl BacnetClient {
         let mut service_data = Vec::new();
         whois.encode(&mut service_data)?;
 
-        let message = self.create_who_is_network_frame(destination_network, &service_data);
+        let message = create_who_is_network_frame(destination_network, &service_data);
         self.socket.send_to(&message, router_addr)?;
 
         self.collect_iam_responses()
     }
 
-    /// Reliably read the device's complete Object_List.
+    /// Read the device's complete Object_List in one RP transaction.
     ///
-    /// The client first requests the complete array. If that is too large or
-    /// times out, it reads index zero to obtain the array length and requests
-    /// indexed elements in adaptive ReadPropertyMultiple batches. Devices
-    /// without RPM support are handled with individual ReadProperty requests.
-    /// The Device object is retained because it is part of the BACnet array.
+    /// Errors such as APDU-too-long are returned directly. No indexed or RPM
+    /// fallback is attempted. The Device object is retained because it is part
+    /// of the BACnet array.
     pub fn read_object_list<T>(
         &self,
         target: T,
@@ -438,212 +392,17 @@ impl BacnetClient {
     {
         let target = target.into();
         let device_object = ObjectIdentifier::new(ObjectType::Device, device_id);
-        let mut objects = Vec::new();
-        self.read_array_into(
-            &target,
-            device_object,
-            PropertyIdentifier::ObjectList,
-            |value| {
-                objects.push(decode_object_list_value(value)?);
-                Ok(())
-            },
-        )?;
-
-        Ok(objects)
-    }
-
-    /// Stream the complete Object_List as values become available.
-    ///
-    /// This uses the same complete/RPM/individual fallback engine as
-    /// [`read_object_list`](Self::read_object_list). The current client socket
-    /// is synchronous, so the work runs on Tokio's blocking pool and sends
-    /// decoded identifiers through a bounded channel. Do not run any other
-    /// receive-oriented operation on the same client concurrently; the planned
-    /// shared async endpoint will remove that restriction.
-    #[cfg(feature = "async")]
-    pub fn read_object_list_stream<T>(
-        self: &Arc<Self>,
-        target: T,
-        device_id: u32,
-    ) -> ObjectListStream
-    where
-        T: Into<BacnetTarget>,
-    {
-        let target = target.into();
-        let client = Arc::clone(self);
-        let (sender, receiver) = tokio::sync::mpsc::channel(32);
-
-        tokio::task::spawn_blocking(move || {
-            let device_object = ObjectIdentifier::new(ObjectType::Device, device_id);
-            let result = client.read_array_into(
-                &target,
-                device_object,
-                PropertyIdentifier::ObjectList,
-                |value| {
-                    let identifier = decode_object_list_value(value)?;
-                    sender
-                        .blocking_send(Ok(identifier))
-                        .map_err(|_| ClientError::NoResponse)
-                },
-            );
-            if let Err(error) = result {
-                let _ = sender.blocking_send(Err(error));
-            }
-        });
-
-        tokio_stream::wrappers::ReceiverStream::new(receiver)
-    }
-
-    /// Read a BACnet array using complete, batched-RPM, and individual-index
-    /// strategies. Values are emitted in array-index order.
-    pub fn read_array<T>(
-        &self,
-        target: T,
-        object: ObjectIdentifier,
-        property: PropertyIdentifier,
-    ) -> Result<Vec<PropertyValue>, ClientError>
-    where
-        T: Into<BacnetTarget>,
-    {
-        let target = target.into();
-        let mut values = Vec::new();
-        self.read_array_into(&target, object, property, |value| {
-            values.push(value);
-            Ok(())
-        })?;
-        Ok(values)
-    }
-
-    fn read_array_into<F>(
-        &self,
-        target: &BacnetTarget,
-        object: ObjectIdentifier,
-        property: PropertyIdentifier,
-        mut emit: F,
-    ) -> Result<(), ClientError>
-    where
-        F: FnMut(PropertyValue) -> Result<(), ClientError>,
-    {
-        match self.read_property_response(target, object, property, None) {
-            Ok(response) => {
-                for value in response.property_values {
-                    emit(value)?;
-                }
-                return Ok(());
-            }
-            Err(error) if array_complete_read_can_fallback(&error) => {}
-            Err(error) => return Err(error),
-        }
-
-        let length_response = self.read_property_response(target, object, property, Some(0))?;
-        let length = decode_array_length(&length_response.property_values)?;
-        if length == 0 {
-            return Ok(());
-        }
-
-        let mut first_index = 1_u32;
-        let mut batch_size = DEFAULT_ARRAY_RPM_BATCH_SIZE.min(length as usize);
-        let mut use_rpm = true;
-
-        while first_index <= length {
-            if use_rpm {
-                let remaining = (length - first_index + 1) as usize;
-                let count = batch_size.min(remaining);
-                match self.read_array_rpm_batch(target, object, property, first_index, count) {
-                    Ok(values) => {
-                        for value in values {
-                            emit(value)?;
-                        }
-                        first_index += count as u32;
-                    }
-                    Err(error) if rpm_is_unavailable(&error) => use_rpm = false,
-                    Err(error) if rpm_batch_can_shrink(&error) && count > 1 => {
-                        batch_size = (count / 2).max(1);
-                    }
-                    Err(error) if rpm_batch_can_shrink(&error) => use_rpm = false,
-                    Err(error) => return Err(error),
-                }
-            } else {
-                let response =
-                    self.read_property_response(target, object, property, Some(first_index))?;
-                if response.property_values.is_empty() {
-                    return Err(ClientError::Decode(format!(
-                        "array index {first_index} returned no value"
-                    )));
-                }
-                for value in response.property_values {
-                    emit(value)?;
-                }
-                first_index += 1;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn read_array_rpm_batch(
-        &self,
-        target: &BacnetTarget,
-        object: ObjectIdentifier,
-        property: PropertyIdentifier,
-        first_index: u32,
-        count: usize,
-    ) -> Result<Vec<PropertyValue>, ClientError> {
-        let references = (first_index..first_index + count as u32)
-            .map(|index| PropertyReference::with_array_index(property, index))
-            .collect();
-        let request = ReadPropertyMultipleRequest::new(vec![ReadAccessSpecification::new(
-            object, references,
-        )]);
-        let response_data = self.send_confirmed_request(
-            target,
-            ConfirmedServiceChoice::ReadPropertyMultiple,
-            &self.encode_rpm_request(&request)?,
-        )?;
-        let response = ReadPropertyMultipleResponse::decode(&response_data)?;
-        let mut results = response
-            .read_access_results
+        self.read_property(&target, device_object, PropertyIdentifier::ObjectList)?
             .into_iter()
-            .filter(|access| access.object_identifier == object)
-            .flat_map(|access| access.results)
-            .collect::<Vec<_>>();
-        let mut values = Vec::with_capacity(count);
-
-        for index in first_index..first_index + count as u32 {
-            let position = results
-                .iter()
-                .position(|result| {
-                    result.property_identifier == property && result.array_index == Some(index)
-                })
-                .ok_or_else(|| {
-                    ClientError::Decode(format!(
-                        "RPM response omitted array index {index} for {property:?}"
-                    ))
-                })?;
-            let result = results.remove(position);
-            match result.value {
-                PropertyResultValue::Value(index_values) if index_values.is_empty() => {
-                    return Err(ClientError::Decode(format!(
-                        "array index {index} returned no value"
-                    )))
-                }
-                PropertyResultValue::Value(index_values) => values.extend(index_values),
-                PropertyResultValue::Error(class, code) => {
-                    return Err(ClientError::PropertyError { class, code })
-                }
-            }
-        }
-
-        Ok(values)
+            .map(decode_object_list_value)
+            .collect()
     }
 
     /// Read every property exposed by an object.
     ///
-    /// The client first asks ReadPropertyMultiple for `ALL`. If that request is
-    /// unsupported or too large, it reads `Property_List` and fetches the
-    /// advertised properties in adaptive RPM batches. Devices without RPM are
-    /// handled with individual ReadProperty calls. BACnet errors for individual
-    /// properties are retained in the snapshot rather than failing the object.
+    /// This issues exactly one ReadPropertyMultiple request with the `ALL`
+    /// selector. It does not fall back to Property_List or individual RP calls.
+    /// BACnet errors for individual properties remain in the snapshot.
     pub fn read_object_properties<T>(
         &self,
         target: T,
@@ -654,22 +413,7 @@ impl BacnetClient {
     {
         let target = target.into();
 
-        match self.read_all_properties_rpm(&target, object) {
-            Ok(properties) if !all_result_requests_fallback(&properties) => {
-                return Ok(ObjectSnapshot {
-                    object_identifier: object,
-                    properties,
-                });
-            }
-            Ok(_) => {}
-            Err(error) if all_properties_can_fallback(&error) => {}
-            Err(error) => return Err(error),
-        }
-
-        let property_values = self.read_array(&target, object, PropertyIdentifier::PropertyList)?;
-        let properties = decode_property_list(property_values)?;
-        let properties = include_implicit_properties(properties);
-        let properties = self.read_known_properties(&target, object, &properties)?;
+        let properties = self.read_all_properties_rpm(&target, object)?;
 
         Ok(ObjectSnapshot {
             object_identifier: object,
@@ -686,12 +430,7 @@ impl BacnetClient {
             object,
             vec![PropertyReference::new(PropertyIdentifier::All)],
         )]);
-        let response_data = self.send_confirmed_request(
-            target,
-            ConfirmedServiceChoice::ReadPropertyMultiple,
-            &self.encode_rpm_request(&request)?,
-        )?;
-        let response = ReadPropertyMultipleResponse::decode(&response_data)?;
+        let response = self.read_property_multiple(target, &request)?;
         let access = response
             .read_access_results
             .into_iter()
@@ -703,205 +442,6 @@ impl BacnetClient {
             .into_iter()
             .map(property_read_result)
             .collect())
-    }
-
-    fn read_known_properties(
-        &self,
-        target: &BacnetTarget,
-        object: ObjectIdentifier,
-        properties: &[PropertyIdentifier],
-    ) -> Result<Vec<PropertyReadResult>, ClientError> {
-        let mut first = 0;
-        let mut batch_size = DEFAULT_PROPERTY_RPM_BATCH_SIZE.min(properties.len());
-        let mut use_rpm = true;
-        let mut results = Vec::with_capacity(properties.len());
-
-        while first < properties.len() {
-            if use_rpm {
-                let count = batch_size.min(properties.len() - first);
-                let batch = &properties[first..first + count];
-                match self.read_properties_rpm_batch(target, object, batch) {
-                    Ok(batch_results) => {
-                        results.extend(batch_results);
-                        first += count;
-                    }
-                    Err(error) if rpm_is_unavailable(&error) => use_rpm = false,
-                    Err(error) if rpm_batch_can_shrink(&error) && count > 1 => {
-                        batch_size = (count / 2).max(1);
-                    }
-                    Err(error) if rpm_batch_can_shrink(&error) => use_rpm = false,
-                    Err(error) => return Err(error),
-                }
-            } else {
-                let property = properties[first];
-                let outcome = match self.read_property(target, object, property) {
-                    Ok(values) => PropertyReadOutcome::Value(values),
-                    Err(ClientError::PropertyError { class, code }) => {
-                        PropertyReadOutcome::Error { class, code }
-                    }
-                    Err(error @ (ClientError::Encoding(_) | ClientError::Decode(_))) => {
-                        PropertyReadOutcome::DecodeError(error.to_string())
-                    }
-                    Err(error) => return Err(error),
-                };
-                results.push(PropertyReadResult {
-                    property_identifier: property,
-                    outcome,
-                });
-                first += 1;
-            }
-        }
-
-        Ok(results)
-    }
-
-    fn read_properties_rpm_batch(
-        &self,
-        target: &BacnetTarget,
-        object: ObjectIdentifier,
-        properties: &[PropertyIdentifier],
-    ) -> Result<Vec<PropertyReadResult>, ClientError> {
-        let references = properties
-            .iter()
-            .copied()
-            .map(PropertyReference::new)
-            .collect();
-        let request = ReadPropertyMultipleRequest::new(vec![ReadAccessSpecification::new(
-            object, references,
-        )]);
-        let response_data = self.send_confirmed_request(
-            target,
-            ConfirmedServiceChoice::ReadPropertyMultiple,
-            &self.encode_rpm_request(&request)?,
-        )?;
-        let response = ReadPropertyMultipleResponse::decode(&response_data)?;
-        let mut results = response
-            .read_access_results
-            .into_iter()
-            .find(|access| access.object_identifier == object)
-            .ok_or_else(|| ClientError::Decode(format!("RPM response omitted {object:?}")))?
-            .results;
-        let mut ordered = Vec::with_capacity(properties.len());
-
-        for property in properties {
-            let position = results
-                .iter()
-                .position(|result| {
-                    result.property_identifier == *property && result.array_index.is_none()
-                })
-                .ok_or_else(|| {
-                    ClientError::Decode(format!("RPM response omitted {property:?} for {object:?}"))
-                })?;
-            ordered.push(property_read_result(results.remove(position)));
-        }
-
-        Ok(ordered)
-    }
-
-    /// Read properties for multiple objects
-    pub fn read_objects_properties<T>(
-        &self,
-        target: T,
-        objects: &[ObjectIdentifier],
-    ) -> Result<Vec<ObjectInfo>, ClientError>
-    where
-        T: Into<BacnetTarget>,
-    {
-        let target = target.into();
-        let mut objects_info = Vec::new();
-        let batch_size = 5;
-
-        for chunk in objects.chunks(batch_size) {
-            let mut read_specs = Vec::new();
-
-            for obj in chunk {
-                let mut property_refs = Vec::new();
-
-                // Always read basic properties
-                property_refs.push(PropertyReference::new(PropertyIdentifier::ObjectName)); // Object_Name
-                property_refs.push(PropertyReference::new(PropertyIdentifier::Description)); // Description
-
-                // Add Present_Value for input/output/value objects
-                match obj.object_type {
-                    ObjectType::AnalogInput
-                    | ObjectType::AnalogOutput
-                    | ObjectType::AnalogValue
-                    | ObjectType::BinaryInput
-                    | ObjectType::BinaryOutput
-                    | ObjectType::BinaryValue
-                    | ObjectType::MultiStateInput
-                    | ObjectType::MultiStateOutput
-                    | ObjectType::MultiStateValue => {
-                        property_refs
-                            .push(PropertyReference::new(PropertyIdentifier::PresentValue)); // Present_Value
-                        property_refs.push(PropertyReference::new(PropertyIdentifier::StatusFlags));
-                        // Status_Flags
-                    }
-                    _ => {}
-                }
-
-                // Add Units for analog objects
-                match obj.object_type {
-                    ObjectType::AnalogInput
-                    | ObjectType::AnalogOutput
-                    | ObjectType::AnalogValue => {
-                        property_refs.push(PropertyReference::new(PropertyIdentifier::Units));
-                    }
-                    _ => {}
-                }
-
-                read_specs.push(ReadAccessSpecification::new(*obj, property_refs));
-            }
-
-            let rpm_request = ReadPropertyMultipleRequest::new(read_specs);
-
-            match self.send_confirmed_request(
-                &target,
-                ConfirmedServiceChoice::ReadPropertyMultiple,
-                &self.encode_rpm_request(&rpm_request)?,
-            ) {
-                Ok(response_data) => {
-                    match ReadPropertyMultipleResponse::decode(&response_data) {
-                        Ok(response) => {
-                            for access in response.read_access_results {
-                                objects_info.push(Self::object_info_from_access(access));
-                            }
-                        }
-                        Err(_) => {
-                            // Add objects with minimal info on parse failure
-                            for obj in chunk {
-                                objects_info.push(ObjectInfo {
-                                    object_identifier: *obj,
-                                    object_name: None,
-                                    description: None,
-                                    present_value: None,
-                                    units: None,
-                                    status_flags: None,
-                                });
-                            }
-                        }
-                    }
-                }
-                Err(_) => {
-                    // Add objects with minimal info on communication failure
-                    for obj in chunk {
-                        objects_info.push(ObjectInfo {
-                            object_identifier: *obj,
-                            object_name: None,
-                            description: None,
-                            present_value: None,
-                            units: None,
-                            status_flags: None,
-                        });
-                    }
-                }
-            }
-
-            // Small delay between requests
-            std::thread::sleep(Duration::from_millis(100));
-        }
-
-        Ok(objects_info)
     }
 
     /// Read a property of an object and return all decoded values.
@@ -924,6 +464,44 @@ impl BacnetClient {
         Ok(self
             .read_property_response(&target, object, property, None)?
             .property_values)
+    }
+
+    /// Read one explicit array index with a single ReadProperty transaction.
+    pub fn read_property_at<T>(
+        &self,
+        target: T,
+        object: ObjectIdentifier,
+        property: PropertyIdentifier,
+        array_index: u32,
+    ) -> Result<Vec<PropertyValue>, ClientError>
+    where
+        T: Into<BacnetTarget>,
+    {
+        let target = target.into();
+        Ok(self
+            .read_property_response(&target, object, property, Some(array_index))?
+            .property_values)
+    }
+
+    /// Execute exactly one ReadPropertyMultiple request.
+    ///
+    /// Per-property BACnet errors remain in the returned response. This method
+    /// does not retry with ReadProperty or alter the requested references.
+    pub fn read_property_multiple<T>(
+        &self,
+        target: T,
+        request: &ReadPropertyMultipleRequest,
+    ) -> Result<ReadPropertyMultipleResponse, ClientError>
+    where
+        T: Into<BacnetTarget>,
+    {
+        let target = target.into();
+        let response_data = self.send_confirmed_request(
+            &target,
+            ConfirmedServiceChoice::ReadPropertyMultiple,
+            &self.encode_rpm_request(request)?,
+        )?;
+        Ok(ReadPropertyMultipleResponse::decode(&response_data)?)
     }
 
     fn read_property_response(
@@ -999,170 +577,111 @@ impl BacnetClient {
 
         Ok(())
     }
+}
 
-    /// Write a property and then read it back to confirm it took effect.
-    ///
-    /// This is the safe way to command a value: it returns
-    /// - `Err(..)` if the device *refused* the write (Error/Reject/Abort) or a
-    ///   transfer failed;
-    /// - `Ok(WriteOutcome::Verified)` if the read-back matches `value`;
-    /// - `Ok(WriteOutcome::NotEffective { read_back })` if the device
-    ///   acknowledged the write but the property still reports a different value
-    ///   (e.g. a higher-priority command is winning, or the property is not
-    ///   commandable at this priority).
-    ///
-    /// Floating-point values are compared with a small tolerance.
-    ///
-    /// A device commonly returns the SimpleAck *before* `Present_Value` reflects
-    /// the new command (priority-array resolution can lag), so the read-back is
-    /// polled a few times before concluding the write did not take effect.
-    pub fn write_property_verified<T>(
-        &self,
-        target: T,
-        object: ObjectIdentifier,
-        property: PropertyIdentifier,
-        value: &PropertyValue,
-        priority: Option<u8>,
-    ) -> Result<WriteOutcome, ClientError>
-    where
-        T: Into<BacnetTarget>,
-    {
-        /// How many times to read back before concluding the write didn't take.
-        const VERIFY_ATTEMPTS: u32 = 4;
-        /// Delay between read-back attempts, giving the device time to apply the
-        /// command to `Present_Value`.
-        const VERIFY_DELAY: Duration = Duration::from_millis(150);
+/// Build a BACnet/IP frame for an unconfirmed request.
+///
+/// `broadcast` selects the frame shape as a pair, matching YABE: a broadcast carries a global-broadcast NPDU
+///
+/// (DNET `0xFFFF`, hop count 255) inside an Original-Broadcast-NPDU BVLC,
+/// while a unicast carries a plain local NPDU inside Original-Unicast-NPDU.
+#[cfg(feature = "std")]
+fn create_unconfirmed_frame(service_choice: u8, service_data: &[u8], broadcast: bool) -> Vec<u8> {
+    let (npdu, bvlc_function) = if broadcast {
+        (Npdu::global_broadcast(), BVLC_ORIGINAL_BROADCAST)
+    } else {
+        let mut npdu = Npdu::new();
+        npdu.control.expecting_reply = false;
+        npdu.control.priority = 0;
+        (npdu, BVLC_ORIGINAL_UNICAST)
+    };
 
-        let target = target.into();
-        self.write_property(&target, object, property, value, priority)?;
+    create_unconfirmed_frame_with_npdu(service_choice, service_data, npdu, bvlc_function)
+}
 
-        let mut read_back = Vec::new();
-        for attempt in 0..VERIFY_ATTEMPTS {
-            if attempt > 0 {
-                std::thread::sleep(VERIFY_DELAY);
-            }
-            read_back = self.read_property(&target, object, property)?;
-            if read_back.iter().any(|v| values_equivalent(value, v)) {
-                return Ok(WriteOutcome::Verified);
-            }
-        }
+/// Build an unconfirmed BACnet/IP frame from an explicitly addressed NPDU.
+#[cfg(feature = "std")]
+fn create_unconfirmed_frame_with_npdu(
+    service_choice: u8,
+    service_data: &[u8],
+    npdu: Npdu,
+    bvlc_function: u8,
+) -> Vec<u8> {
+    let npdu_buffer = npdu.encode();
 
-        // Not verified: report the value the property actually holds.
-        let read_back = read_back.into_iter().next().unwrap_or(PropertyValue::Null);
-        Ok(WriteOutcome::NotEffective { read_back })
-    }
+    // Create unconfirmed service request APDU
+    let mut apdu = vec![0x10]; // Unconfirmed-Request PDU type
+    apdu.push(service_choice);
+    apdu.extend_from_slice(service_data);
 
-    /// Create an unconfirmed message
-    fn create_unconfirmed_message(&self, service_choice: u8, service_data: &[u8]) -> Vec<u8> {
-        self.create_unconfirmed_frame(service_choice, service_data, false)
-    }
+    // Combine NPDU and APDU
+    let mut message = npdu_buffer;
+    message.extend_from_slice(&apdu);
 
-    /// Build a BACnet/IP frame for an unconfirmed request.
-    ///
-    /// `broadcast` selects the frame shape as a pair, matching YABE: a broadcast carries a global-broadcast NPDU
-    ///
-    /// (DNET `0xFFFF`, hop count 255) inside an Original-Broadcast-NPDU BVLC,
-    /// while a unicast carries a plain local NPDU inside Original-Unicast-NPDU.
-    fn create_unconfirmed_frame(
-        &self,
-        service_choice: u8,
-        service_data: &[u8],
-        broadcast: bool,
-    ) -> Vec<u8> {
-        let (npdu, bvlc_function) = if broadcast {
-            (Npdu::global_broadcast(), BVLC_ORIGINAL_BROADCAST)
+    // Wrap in BVLC header for BACnet/IP
+    let mut bvlc_message = vec![0x81, bvlc_function, 0x00, 0x00];
+    bvlc_message.extend_from_slice(&message);
+
+    // Update BVLC length
+    let total_len = bvlc_message.len() as u16;
+    bvlc_message[2] = (total_len >> 8) as u8;
+    bvlc_message[3] = (total_len & 0xFF) as u8;
+
+    bvlc_message
+}
+
+/// Build a Who-Is whose NPDU destination is a broadcast on `network`.
+#[cfg(feature = "std")]
+fn create_who_is_network_frame(network: u16, service_data: &[u8]) -> Vec<u8> {
+    // The IP packet is unicast to the known router. The NPDU destination,
+    // not the BVLC function or IP address, asks the router to broadcast the
+    // Who-Is on the downstream BACnet network. An empty DADR means every
+    // station on DNET.
+    let mut npdu = Npdu::new();
+    npdu.set_destination(NetworkAddress::new(network, Vec::new()));
+    npdu.hop_count = Some(255);
+
+    create_unconfirmed_frame_with_npdu(
+        UnconfirmedServiceChoice::WhoIs as u8,
+        service_data,
+        npdu,
+        BVLC_ORIGINAL_UNICAST,
+    )
+}
+
+/// Build a Who-Is-Router-To-Network network-layer message.
+#[cfg(feature = "std")]
+fn create_who_is_router_frame(destination_network: Option<u16>, broadcast: bool) -> Vec<u8> {
+    let mut npdu = Npdu::new();
+    npdu.control.network_message = true;
+
+    let message_data = destination_network.map(|network| network.to_be_bytes().to_vec());
+    let network_message =
+        NetworkLayerMessage::new(NetworkMessageType::WhoIsRouterToNetwork, message_data);
+
+    let mut payload = npdu.encode();
+    payload.extend_from_slice(&network_message.encode());
+    wrap_bvlc(
+        if broadcast {
+            BVLC_ORIGINAL_BROADCAST
         } else {
-            let mut npdu = Npdu::new();
-            npdu.control.expecting_reply = false;
-            npdu.control.priority = 0;
-            (npdu, BVLC_ORIGINAL_UNICAST)
-        };
+            BVLC_ORIGINAL_UNICAST
+        },
+        &payload,
+    )
+}
 
-        self.create_unconfirmed_frame_with_npdu(service_choice, service_data, npdu, bvlc_function)
-    }
+#[cfg(feature = "std")]
+fn wrap_bvlc(function: u8, payload: &[u8]) -> Vec<u8> {
+    let total_len = 4 + payload.len();
+    let mut frame = Vec::with_capacity(total_len);
+    frame.extend_from_slice(&[0x81, function, (total_len >> 8) as u8, total_len as u8]);
+    frame.extend_from_slice(payload);
+    frame
+}
 
-    /// Build an unconfirmed BACnet/IP frame from an explicitly addressed NPDU.
-    fn create_unconfirmed_frame_with_npdu(
-        &self,
-        service_choice: u8,
-        service_data: &[u8],
-        npdu: Npdu,
-        bvlc_function: u8,
-    ) -> Vec<u8> {
-        let npdu_buffer = npdu.encode();
-
-        // Create unconfirmed service request APDU
-        let mut apdu = vec![0x10]; // Unconfirmed-Request PDU type
-        apdu.push(service_choice);
-        apdu.extend_from_slice(service_data);
-
-        // Combine NPDU and APDU
-        let mut message = npdu_buffer;
-        message.extend_from_slice(&apdu);
-
-        // Wrap in BVLC header for BACnet/IP
-        let mut bvlc_message = vec![0x81, bvlc_function, 0x00, 0x00];
-        bvlc_message.extend_from_slice(&message);
-
-        // Update BVLC length
-        let total_len = bvlc_message.len() as u16;
-        bvlc_message[2] = (total_len >> 8) as u8;
-        bvlc_message[3] = (total_len & 0xFF) as u8;
-
-        bvlc_message
-    }
-
-    /// Build a Who-Is whose NPDU destination is a broadcast on `network`.
-    fn create_who_is_network_frame(&self, network: u16, service_data: &[u8]) -> Vec<u8> {
-        // The IP packet is unicast to the known router. The NPDU destination,
-        // not the BVLC function or IP address, asks the router to broadcast the
-        // Who-Is on the downstream BACnet network. An empty DADR means every
-        // station on DNET.
-        let mut npdu = Npdu::new();
-        npdu.set_destination(NetworkAddress::new(network, Vec::new()));
-        npdu.hop_count = Some(255);
-
-        self.create_unconfirmed_frame_with_npdu(
-            UnconfirmedServiceChoice::WhoIs as u8,
-            service_data,
-            npdu,
-            BVLC_ORIGINAL_UNICAST,
-        )
-    }
-
-    /// Build a Who-Is-Router-To-Network network-layer message.
-    fn create_who_is_router_frame(
-        &self,
-        destination_network: Option<u16>,
-        broadcast: bool,
-    ) -> Vec<u8> {
-        let mut npdu = Npdu::new();
-        npdu.control.network_message = true;
-
-        let message_data = destination_network.map(|network| network.to_be_bytes().to_vec());
-        let network_message =
-            NetworkLayerMessage::new(NetworkMessageType::WhoIsRouterToNetwork, message_data);
-
-        let mut payload = npdu.encode();
-        payload.extend_from_slice(&network_message.encode());
-        Self::wrap_bvlc(
-            if broadcast {
-                BVLC_ORIGINAL_BROADCAST
-            } else {
-                BVLC_ORIGINAL_UNICAST
-            },
-            &payload,
-        )
-    }
-
-    fn wrap_bvlc(function: u8, payload: &[u8]) -> Vec<u8> {
-        let total_len = 4 + payload.len();
-        let mut frame = Vec::with_capacity(total_len);
-        frame.extend_from_slice(&[0x81, function, (total_len >> 8) as u8, total_len as u8]);
-        frame.extend_from_slice(payload);
-        frame
-    }
-
+#[cfg(feature = "std")]
+impl BacnetClient {
     /// Collect and de-duplicate I-Am responses until the client timeout.
     fn collect_iam_responses(&self) -> Result<Vec<DeviceInfo>, ClientError> {
         let mut devices = Vec::new();
@@ -1173,7 +692,7 @@ impl BacnetClient {
         while start_time.elapsed() < self.timeout {
             match self.socket.recv_from(&mut recv_buffer) {
                 Ok((len, source)) => {
-                    if let Some(info) = self.parse_iam_response(&recv_buffer[..len], source) {
+                    if let Some(info) = parse_iam_response(&recv_buffer[..len], source) {
                         if seen.insert(info.device_id) {
                             devices.push(info);
                         }
@@ -1202,8 +721,7 @@ impl BacnetClient {
         while start_time.elapsed() < self.timeout {
             match self.socket.recv_from(&mut recv_buffer) {
                 Ok((len, source)) => {
-                    if let Some(response) =
-                        self.parse_i_am_router_response(&recv_buffer[..len], source)
+                    if let Some(response) = parse_i_am_router_response(&recv_buffer[..len], source)
                     {
                         if let Some(existing) = routers
                             .iter_mut()
@@ -1313,110 +831,109 @@ impl BacnetClient {
 
         let mut message = npdu_data;
         message.extend_from_slice(apdu_data);
-        Self::wrap_bvlc(BVLC_ORIGINAL_UNICAST, &message)
+        wrap_bvlc(BVLC_ORIGINAL_UNICAST, &message)
+    }
+}
+
+/// Parse I-Am response
+#[cfg(feature = "std")]
+fn parse_iam_response(data: &[u8], source: SocketAddr) -> Option<DeviceInfo> {
+    let frame = decode_bacnet_ip_frame(data, source)?;
+    let apdu = frame.payload;
+
+    if apdu.len() < 2 || apdu[0] != 0x10 || apdu[1] != UnconfirmedServiceChoice::IAm as u8 {
+        return None;
     }
 
-    /// Parse I-Am response
-    fn parse_iam_response(&self, data: &[u8], source: SocketAddr) -> Option<DeviceInfo> {
-        let frame = Self::decode_bacnet_ip_frame(data, source)?;
-        let apdu = frame.payload;
+    match IAmRequest::decode(&apdu[2..]) {
+        Ok(iam) => {
+            let vendor_name = crate::vendor::get_vendor_name(iam.vendor_identifier)
+                .unwrap_or("Unknown Vendor")
+                .to_string();
 
-        if apdu.len() < 2 || apdu[0] != 0x10 || apdu[1] != UnconfirmedServiceChoice::IAm as u8 {
-            return None;
+            Some(DeviceInfo {
+                device_id: iam.device_identifier.instance,
+                address: frame.source,
+                route: frame.npdu.source,
+                vendor_id: iam.vendor_identifier,
+                vendor_name,
+                max_apdu: iam.max_apdu_length_accepted,
+                segmentation: iam.segmentation_supported,
+            })
         }
+        Err(_) => None,
+    }
+}
 
-        match IAmRequest::decode(&apdu[2..]) {
-            Ok(iam) => {
-                let vendor_name = crate::vendor::get_vendor_name(iam.vendor_identifier)
-                    .unwrap_or("Unknown Vendor")
-                    .to_string();
-
-                Some(DeviceInfo {
-                    device_id: iam.device_identifier.instance,
-                    address: frame.source,
-                    route: frame.npdu.source,
-                    vendor_id: iam.vendor_identifier,
-                    vendor_name,
-                    max_apdu: iam.max_apdu_length_accepted,
-                    segmentation: iam.segmentation_supported,
-                })
-            }
-            Err(_) => None,
-        }
+#[cfg(feature = "std")]
+fn parse_i_am_router_response(data: &[u8], source: SocketAddr) -> Option<DiscoveredRouter> {
+    let frame = decode_bacnet_ip_frame(data, source)?;
+    if !frame.npdu.is_network_message() {
+        return None;
     }
 
-    fn parse_i_am_router_response(
-        &self,
-        data: &[u8],
-        source: SocketAddr,
-    ) -> Option<DiscoveredRouter> {
-        let frame = Self::decode_bacnet_ip_frame(data, source)?;
-        if !frame.npdu.is_network_message() {
-            return None;
-        }
-
-        let message = NetworkLayerMessage::decode(frame.payload).ok()?;
-        if message.message_type != NetworkMessageType::IAmRouterToNetwork {
-            return None;
-        }
-
-        let bytes = message.data().unwrap_or_default();
-        if bytes.len() % 2 != 0 {
-            return None;
-        }
-        let mut networks: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
-            .collect();
-        networks.sort_unstable();
-        networks.dedup();
-
-        Some(DiscoveredRouter {
-            address: frame.source,
-            networks,
-        })
+    let message = NetworkLayerMessage::decode(frame.payload).ok()?;
+    if message.message_type != NetworkMessageType::IAmRouterToNetwork {
+        return None;
     }
 
-    fn decode_bacnet_ip_frame(
-        data: &[u8],
-        udp_source: SocketAddr,
-    ) -> Option<DecodedBacnetIpFrame<'_>> {
-        if data.len() < 6 || data[0] != 0x81 {
-            return None;
-        }
-        let bvlc_length = u16::from_be_bytes([data[2], data[3]]) as usize;
-        if data.len() != bvlc_length {
-            return None;
-        }
+    let bytes = message.data().unwrap_or_default();
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let mut networks: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+        .collect();
+    networks.sort_unstable();
+    networks.dedup();
 
-        // Forwarded-NPDU carries the original B/IP source between the BVLC
-        // header and NPDU. Other NPDU-bearing BVLC functions start at byte 4.
-        let (npdu_start, source) = if data[1] == 0x04 {
-            if data.len() < 12 {
-                return None;
-            }
-            let source = SocketAddr::from((
-                [data[4], data[5], data[6], data[7]],
-                u16::from_be_bytes([data[8], data[9]]),
-            ));
-            (10, source)
-        } else {
-            (4, udp_source)
-        };
+    Some(DiscoveredRouter {
+        address: frame.source,
+        networks,
+    })
+}
 
-        let (npdu, npdu_len) = Npdu::decode(&data[npdu_start..]).ok()?;
-        let payload_start = npdu_start + npdu_len;
-        if payload_start > data.len() {
-            return None;
-        }
-
-        Some(DecodedBacnetIpFrame {
-            source,
-            npdu,
-            payload: &data[payload_start..],
-        })
+#[cfg(feature = "std")]
+fn decode_bacnet_ip_frame(data: &[u8], udp_source: SocketAddr) -> Option<DecodedBacnetIpFrame<'_>> {
+    if data.len() < 6 || data[0] != 0x81 {
+        return None;
+    }
+    let bvlc_length = u16::from_be_bytes([data[2], data[3]]) as usize;
+    if data.len() != bvlc_length {
+        return None;
     }
 
+    // Forwarded-NPDU carries the original B/IP source between the BVLC
+    // header and NPDU. Other NPDU-bearing BVLC functions start at byte 4.
+    let (npdu_start, source) = if data[1] == 0x04 {
+        if data.len() < 12 {
+            return None;
+        }
+        let source = SocketAddr::from((
+            [data[4], data[5], data[6], data[7]],
+            u16::from_be_bytes([data[8], data[9]]),
+        ));
+        (10, source)
+    } else {
+        (4, udp_source)
+    };
+
+    let (npdu, npdu_len) = Npdu::decode(&data[npdu_start..]).ok()?;
+    let payload_start = npdu_start + npdu_len;
+    if payload_start > data.len() {
+        return None;
+    }
+
+    Some(DecodedBacnetIpFrame {
+        source,
+        npdu,
+        payload: &data[payload_start..],
+    })
+}
+
+#[cfg(feature = "std")]
+impl BacnetClient {
     /// Interpret a received datalink frame as a response to `expected_invoke_id`.
     ///
     /// Returns:
@@ -1438,7 +955,7 @@ impl BacnetClient {
         data: &[u8],
         expected_invoke_id: u8,
     ) -> Result<Option<Vec<u8>>, ClientError> {
-        let frame = match Self::decode_bacnet_ip_frame(data, SocketAddr::from(([0, 0, 0, 0], 0))) {
+        let frame = match decode_bacnet_ip_frame(data, SocketAddr::from(([0, 0, 0, 0], 0))) {
             Some(frame) => frame,
             None => return Ok(None),
         };
@@ -1489,59 +1006,6 @@ impl BacnetClient {
 
         Ok(buffer)
     }
-
-    /// Map a decoded ReadPropertyMultiple result for a single object into the
-    /// client's [`ObjectInfo`] view, pulling out the common properties.
-    ///
-    /// Per-property errors (`PropertyResultValue::Error`) are skipped, leaving
-    /// that field `None`.
-    fn object_info_from_access(access: ReadAccessResult) -> ObjectInfo {
-        let mut info = ObjectInfo {
-            object_identifier: access.object_identifier,
-            object_name: None,
-            description: None,
-            present_value: None,
-            units: None,
-            status_flags: None,
-        };
-
-        for result in access.results {
-            let values = match result.value {
-                PropertyResultValue::Value(values) => values,
-                PropertyResultValue::Error(..) => continue,
-            };
-            let first = values.into_iter().next();
-
-            match result.property_identifier {
-                PropertyIdentifier::ObjectName => {
-                    if let Some(PropertyValue::CharacterString(s)) = first {
-                        info.object_name = Some(s);
-                    }
-                }
-                PropertyIdentifier::Description => {
-                    if let Some(PropertyValue::CharacterString(s)) = first {
-                        info.description = Some(s);
-                    }
-                }
-                PropertyIdentifier::PresentValue => {
-                    info.present_value = first;
-                }
-                PropertyIdentifier::Units => {
-                    if let Some(PropertyValue::Enumerated(units_id)) = first {
-                        info.units = Some(EngineeringUnits::from(units_id));
-                    }
-                }
-                PropertyIdentifier::StatusFlags => {
-                    if let Some(PropertyValue::BitString(bits)) = first {
-                        info.status_flags = Some(bits);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        info
-    }
 }
 
 #[cfg(feature = "std")]
@@ -1557,164 +1021,12 @@ fn property_read_result(result: PropertyResult) -> PropertyReadResult {
 }
 
 #[cfg(feature = "std")]
-fn all_result_requests_fallback(properties: &[PropertyReadResult]) -> bool {
-    properties.is_empty()
-        || properties
-            .iter()
-            .any(|result| result.property_identifier == PropertyIdentifier::All)
-}
-
-#[cfg(feature = "std")]
-fn all_properties_can_fallback(error: &ClientError) -> bool {
-    rpm_is_unavailable(error)
-        || rpm_batch_can_shrink(error)
-        || matches!(
-            error,
-            ClientError::PropertyError {
-                code: ERROR_CODE_UNKNOWN_PROPERTY | ERROR_CODE_OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED,
-                ..
-            }
-        )
-}
-
-#[cfg(feature = "std")]
-fn decode_property_list(
-    values: Vec<PropertyValue>,
-) -> Result<Vec<PropertyIdentifier>, ClientError> {
-    fn append(
-        value: PropertyValue,
-        properties: &mut Vec<PropertyIdentifier>,
-    ) -> Result<(), ClientError> {
-        match value {
-            PropertyValue::Enumerated(identifier) => {
-                properties.push(PropertyIdentifier::from(identifier));
-                Ok(())
-            }
-            PropertyValue::Array(values) | PropertyValue::List(values) => {
-                for value in values {
-                    append(value, properties)?;
-                }
-                Ok(())
-            }
-            value => Err(ClientError::Decode(format!(
-                "Property_List contained {value:?} instead of an enumerated property identifier"
-            ))),
-        }
-    }
-
-    let mut properties = Vec::new();
-    for value in values {
-        append(value, &mut properties)?;
-    }
-    Ok(properties)
-}
-
-#[cfg(feature = "std")]
-fn include_implicit_properties(properties: Vec<PropertyIdentifier>) -> Vec<PropertyIdentifier> {
-    let mut complete = vec![
-        PropertyIdentifier::ObjectIdentifier,
-        PropertyIdentifier::ObjectName,
-        PropertyIdentifier::ObjectType,
-        PropertyIdentifier::PropertyList,
-    ];
-    for property in properties {
-        if !matches!(
-            property,
-            PropertyIdentifier::All | PropertyIdentifier::Required | PropertyIdentifier::Optional
-        ) && !complete.contains(&property)
-        {
-            complete.push(property);
-        }
-    }
-    complete
-}
-
-#[cfg(feature = "std")]
-fn decode_array_length(values: &[PropertyValue]) -> Result<u32, ClientError> {
-    match values {
-        [PropertyValue::Unsigned(length)] => (*length).try_into().map_err(|_| {
-            ClientError::Decode(format!("BACnet array length {length} does not fit in u32"))
-        }),
-        _ => Err(ClientError::Decode(format!(
-            "array index zero returned {values:?} instead of one unsigned length"
-        ))),
-    }
-}
-
-#[cfg(feature = "std")]
 fn decode_object_list_value(value: PropertyValue) -> Result<ObjectIdentifier, ClientError> {
     match value {
         PropertyValue::ObjectIdentifier(identifier) => Ok(identifier),
         value => Err(ClientError::Decode(format!(
             "Object_List contained {value:?} instead of an object identifier"
         ))),
-    }
-}
-
-#[cfg(feature = "std")]
-fn array_complete_read_can_fallback(error: &ClientError) -> bool {
-    matches!(
-        error,
-        ClientError::Timeout
-            | ClientError::NoResponse
-            | ClientError::Encoding(_)
-            | ClientError::Decode(_)
-            | ClientError::Abort(
-                AbortReason::BufferOverflow
-                    | AbortReason::SegmentationNotSupported
-                    | AbortReason::OutOfResources
-                    | AbortReason::ApduTooLong
-            )
-    )
-}
-
-#[cfg(feature = "std")]
-fn rpm_is_unavailable(error: &ClientError) -> bool {
-    matches!(
-        error,
-        ClientError::Rejected(RejectReason::UnrecognizedService)
-            | ClientError::PropertyError {
-                code: ERROR_CODE_OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED,
-                ..
-            }
-    )
-}
-
-#[cfg(feature = "std")]
-fn rpm_batch_can_shrink(error: &ClientError) -> bool {
-    matches!(
-        error,
-        ClientError::Timeout
-            | ClientError::NoResponse
-            | ClientError::Encoding(_)
-            | ClientError::Decode(_)
-            | ClientError::Abort(
-                AbortReason::BufferOverflow
-                    | AbortReason::SegmentationNotSupported
-                    | AbortReason::OutOfResources
-                    | AbortReason::ApduTooLong
-            )
-    )
-}
-
-/// Compare a written value against a read-back value when verifying a write,
-/// tolerating floating-point rounding for Real/Double (including a Real written
-/// value read back as a Double, or vice versa).
-#[cfg(feature = "std")]
-fn values_equivalent(written: &PropertyValue, read_back: &PropertyValue) -> bool {
-    const REAL_TOLERANCE: f64 = 1e-3;
-    match (written, read_back) {
-        (PropertyValue::Real(a), PropertyValue::Real(b)) => {
-            (f64::from(*a) - f64::from(*b)).abs() <= REAL_TOLERANCE
-        }
-        (PropertyValue::Double(a), PropertyValue::Double(b)) => (a - b).abs() <= REAL_TOLERANCE,
-        (PropertyValue::Real(a), PropertyValue::Double(b)) => {
-            (f64::from(*a) - b).abs() <= REAL_TOLERANCE
-        }
-        (PropertyValue::Double(a), PropertyValue::Real(b)) => {
-            (a - f64::from(*b)).abs() <= REAL_TOLERANCE
-        }
-        (a, b) => a == b,
     }
 }
 
@@ -1816,9 +1128,7 @@ mod tests {
         // The frame YABE sends for a global
         // Who-Is (issue #58): Original-Broadcast-NPDU BVLC around an NPDU
         // with DNET 0xFFFF, DLEN 0, hop count 255.
-        let client = test_client();
-        let frame =
-            client.create_unconfirmed_frame(UnconfirmedServiceChoice::WhoIs as u8, &[], true);
+        let frame = create_unconfirmed_frame(UnconfirmedServiceChoice::WhoIs as u8, &[], true);
         assert_eq!(
             frame,
             [
@@ -1831,9 +1141,7 @@ mod tests {
 
     #[test]
     fn test_unicast_whois_frame_uses_local_npdu() {
-        let client = test_client();
-        let frame =
-            client.create_unconfirmed_frame(UnconfirmedServiceChoice::WhoIs as u8, &[], false);
+        let frame = create_unconfirmed_frame(UnconfirmedServiceChoice::WhoIs as u8, &[], false);
         assert_eq!(
             frame,
             [
@@ -1846,8 +1154,7 @@ mod tests {
 
     #[test]
     fn test_network_whois_unicasts_to_router_with_downstream_broadcast_npdu() {
-        let client = test_client();
-        let frame = client.create_who_is_network_frame(200, &[]);
+        let frame = create_who_is_network_frame(200, &[]);
 
         assert_eq!(
             frame,
@@ -1861,12 +1168,11 @@ mod tests {
 
     #[test]
     fn test_network_whois_preserves_device_instance_range() {
-        let client = test_client();
         let request = WhoIsRequest::for_range(100, 200);
         let mut service_data = Vec::new();
         request.encode(&mut service_data).unwrap();
 
-        let frame = client.create_who_is_network_frame(300, &service_data);
+        let frame = create_who_is_network_frame(300, &service_data);
         let (npdu, npdu_len) = Npdu::decode(&frame[4..]).unwrap();
         assert_eq!(npdu.destination, Some(NetworkAddress::new(300, Vec::new())));
 
@@ -1877,10 +1183,8 @@ mod tests {
 
     #[test]
     fn test_who_is_router_frames_encode_optional_network() {
-        let client = test_client();
-
         assert_eq!(
-            client.create_who_is_router_frame(None, true),
+            create_who_is_router_frame(None, true),
             [
                 0x81, 0x0B, 0x00, 0x07, // BVLC Original-Broadcast-NPDU
                 0x01, 0x80, // NPDU network-layer message
@@ -1888,7 +1192,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            client.create_who_is_router_frame(Some(200), false),
+            create_who_is_router_frame(Some(200), false),
             [
                 0x81, 0x0A, 0x00, 0x09, // BVLC Original-Unicast-NPDU
                 0x01, 0x80, // NPDU network-layer message
@@ -1899,7 +1203,6 @@ mod tests {
 
     #[test]
     fn test_i_am_router_response_decodes_advertised_networks() {
-        let client = test_client();
         let frame = [
             0x81, 0x0A, 0x00, 0x0B, // BVLC Original-Unicast-NPDU
             0x01, 0x80, // NPDU network-layer message
@@ -1909,7 +1212,7 @@ mod tests {
         ];
         let source = "192.0.2.10:47808".parse().unwrap();
 
-        let router = client.parse_i_am_router_response(&frame, source).unwrap();
+        let router = parse_i_am_router_response(&frame, source).unwrap();
         assert_eq!(
             router,
             DiscoveredRouter {
@@ -1921,7 +1224,6 @@ mod tests {
 
     #[test]
     fn test_routed_i_am_preserves_router_and_npdu_source() {
-        let client = test_client();
         let route = NetworkAddress::new(200, vec![5]);
         let mut npdu = Npdu::new();
         npdu.set_source(route.clone());
@@ -1937,10 +1239,10 @@ mod tests {
         let mut payload = npdu.encode();
         payload.extend_from_slice(&[0x10, UnconfirmedServiceChoice::IAm as u8]);
         payload.extend_from_slice(&service_data);
-        let frame = BacnetClient::wrap_bvlc(BVLC_ORIGINAL_UNICAST, &payload);
+        let frame = wrap_bvlc(BVLC_ORIGINAL_UNICAST, &payload);
         let router: SocketAddr = "192.0.2.10:47808".parse().unwrap();
 
-        let device = client.parse_iam_response(&frame, router).unwrap();
+        let device = parse_iam_response(&frame, router).unwrap();
         assert_eq!(device.device_id, 1234);
         assert_eq!(device.address, router);
         assert_eq!(device.route, Some(route));

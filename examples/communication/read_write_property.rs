@@ -27,7 +27,7 @@
 //!   cargo run --example read_write_property 10.161.1.211 analogValue 4 3.0 none
 
 use bacnet_rs::{
-    client::{BacnetClient, WriteOutcome},
+    client::BacnetClient,
     object::{ObjectIdentifier, ObjectType, PropertyIdentifier},
     property::PropertyValue,
 };
@@ -93,25 +93,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let value: f32 = value_arg.parse()?;
         println!("Writing Present_Value = {value} (priority {priority:?})...");
-        // write_property_verified writes, then reads back to confirm the value
-        // actually took effect — a SimpleAck alone does not guarantee that.
-        match client.write_property_verified(
+        // The client exposes the two protocol operations separately. This
+        // example chooses one read-back; applications own delay/retry policy.
+        match client.write_property(
             target_addr,
             object,
             PropertyIdentifier::PresentValue,
             &PropertyValue::Real(value),
             priority,
         ) {
-            Ok(WriteOutcome::Verified) => {
-                println!("  Write VERIFIED: Present_Value is now {value}.");
-            }
-            Ok(WriteOutcome::NotEffective { read_back }) => {
-                let prio = priority.map_or_else(|| "none".to_string(), |p| p.to_string());
-                println!(
-                    "  NotEffective: SimpleAck @ prio {prio}, PV unchanged ({}) — slot \
-                     overridden by higher priority or non-commandable.",
-                    read_back.as_display_string()
-                );
+            Ok(()) => {
+                println!("  Write acknowledged.");
+                match client.read_property(target_addr, object, PropertyIdentifier::PresentValue) {
+                    Ok(read_back) => println!("  Read-back: {}", show_values(&read_back)),
+                    Err(error) => println!("  Read-back failed: {error}"),
+                }
             }
             // The typed error tells us exactly why the device refused (e.g.
             // not writable) instead of hanging until timeout.

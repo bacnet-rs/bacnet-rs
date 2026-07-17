@@ -3,7 +3,7 @@
 //! This example tests the high-level BACnet client utilities
 //! with comprehensive engineering units support.
 
-use bacnet_rs::client::BacnetClient;
+use bacnet_rs::client::{BacnetClient, PropertyReadOutcome};
 use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,33 +65,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Read properties for first few objects
     println!("\nReading properties for first 5 objects...");
     let sample_objects = &objects[..std::cmp::min(5, objects.len())];
-    let objects_info = client.read_objects_properties(target_addr, sample_objects)?;
-
-    for obj_info in &objects_info {
-        println!(
-            "\n{} Instance {}:",
-            obj_info.object_identifier.object_type, obj_info.object_identifier.instance
-        );
-
-        if let Some(name) = &obj_info.object_name {
-            println!("  Name: {}", name);
-        }
-
-        if let Some(desc) = &obj_info.description {
-            println!("  Description: {}", desc);
-        }
-
-        if let Some(value) = &obj_info.present_value {
-            println!("  Present Value: {:?}", value);
-        }
-
-        if let Some(units) = &obj_info.units {
-            println!("  Units: {}", units.bacnet_name());
-            println!("  Unit ID: {}", u32::from(*units));
-        }
-
-        if let Some(flags) = &obj_info.status_flags {
-            println!("  Status Flags: {:?}", flags);
+    for object in sample_objects {
+        let snapshot = client.read_object_properties(target_addr, *object)?;
+        println!("\n{} Instance {}:", object.object_type, object.instance);
+        for property in snapshot.properties {
+            match property.outcome {
+                PropertyReadOutcome::Value(values) => {
+                    println!("  {:?}: {:?}", property.property_identifier, values);
+                }
+                PropertyReadOutcome::Error { class, code } => {
+                    println!(
+                        "  {:?}: BACnet error class {class}, code {code}",
+                        property.property_identifier
+                    );
+                }
+                PropertyReadOutcome::DecodeError(error) => {
+                    println!(
+                        "  {:?}: decode error: {error}",
+                        property.property_identifier
+                    );
+                }
+            }
         }
     }
 

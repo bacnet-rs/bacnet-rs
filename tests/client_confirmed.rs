@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use bacnet_rs::{
     app::Apdu,
-    client::{BacnetClient, ClientError, PropertyReadOutcome, WriteOutcome},
+    client::{BacnetClient, ClientError, PropertyReadOutcome},
     network::Npdu,
     object::{ObjectIdentifier, ObjectType, PropertyIdentifier},
     property::PropertyValue,
@@ -76,31 +76,6 @@ where
     thread::spawn(move || {
         let mut buf = [0u8; 1500];
         if let Ok((len, src)) = socket.recv_from(&mut buf) {
-            let (invoke_id, service_choice) = parse_confirmed_request(&buf[..len]);
-            let frame = wrap_response(make_response(invoke_id, service_choice));
-            socket.send_to(&frame, src).expect("send response");
-        }
-    });
-
-    addr
-}
-
-/// Like [`spawn_device`] but answers every confirmed request until the peer
-/// goes idle (1s with no request), calling `make_response` for each. Used for
-/// flows that issue several requests, e.g. write then a polled read-back.
-fn spawn_device_loop<F>(mut make_response: F) -> SocketAddr
-where
-    F: FnMut(u8, ConfirmedServiceChoice) -> Apdu + Send + 'static,
-{
-    let socket = UdpSocket::bind("127.0.0.1:0").expect("bind device");
-    socket
-        .set_read_timeout(Some(Duration::from_secs(1)))
-        .unwrap();
-    let addr = socket.local_addr().unwrap();
-
-    thread::spawn(move || {
-        let mut buf = [0u8; 1500];
-        while let Ok((len, src)) = socket.recv_from(&mut buf) {
             let (invoke_id, service_choice) = parse_confirmed_request(&buf[..len]);
             let frame = wrap_response(make_response(invoke_id, service_choice));
             socket.send_to(&frame, src).expect("send response");
@@ -309,6 +284,42 @@ fn read_property_surfaces_error_pdu() {
 }
 
 #[test]
+fn indexed_read_property_is_an_explicit_single_transaction() {
+    let object = ObjectIdentifier::new(ObjectType::Device, 1234);
+    let addr = spawn_request_device_loop(move |request| {
+        let Apdu::ConfirmedRequest {
+            invoke_id,
+            service_choice: ConfirmedServiceChoice::ReadProperty,
+            service_data,
+            ..
+        } = request
+        else {
+            panic!("expected ReadProperty request")
+        };
+        let request = ReadPropertyRequest::decode(&service_data).unwrap();
+        assert_eq!(request.property_array_index, Some(3));
+        read_property_request_ack(
+            invoke_id,
+            &request,
+            vec![PropertyValue::ObjectIdentifier(ObjectIdentifier::new(
+                ObjectType::AnalogValue,
+                2,
+            ))],
+        )
+    });
+
+    assert_eq!(
+        test_client()
+            .read_property_at(addr, object, PropertyIdentifier::ObjectList, 3)
+            .unwrap(),
+        vec![PropertyValue::ObjectIdentifier(ObjectIdentifier::new(
+            ObjectType::AnalogValue,
+            2,
+        ))]
+    );
+}
+
+#[test]
 fn confirmed_request_retries_after_timeout() {
     let object = ObjectIdentifier::new(ObjectType::AnalogValue, 1);
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -389,7 +400,7 @@ fn object_list_prefers_one_complete_read_and_retains_device_object() {
 }
 
 #[test]
-fn object_list_does_not_hide_read_access_errors_with_fallbacks() {
+fn object_list_does_not_hide_read_access_errors() {
     let requests = Arc::new(AtomicUsize::new(0));
     let observed_requests = Arc::clone(&requests);
     let addr = spawn_request_device_loop(move |request| {
@@ -418,7 +429,7 @@ fn object_list_does_not_hide_read_access_errors_with_fallbacks() {
 }
 
 #[test]
-fn object_list_uses_multiple_indexed_rpm_batches_when_complete_read_is_too_large() {
+fn object_list_surfaces_complete_read_abort_without_rpm_fallback() {
     let device_id = 1234;
     let length = 40_u32;
     let rpm_requests = Arc::new(AtomicUsize::new(0));
@@ -459,21 +470,15 @@ fn object_list_uses_multiple_indexed_rpm_batches_when_complete_read_is_too_large
         }
     });
 
-    let objects = test_client().read_object_list(addr, device_id).unwrap();
-    assert_eq!(objects.len(), length as usize);
-    assert_eq!(
-        objects[0],
-        ObjectIdentifier::new(ObjectType::Device, device_id)
-    );
-    assert_eq!(
-        objects[39],
-        ObjectIdentifier::new(ObjectType::AnalogValue, 39)
-    );
-    assert_eq!(rpm_requests.load(Ordering::SeqCst), 2);
+    assert!(matches!(
+        test_client().read_object_list(addr, device_id),
+        Err(ClientError::Abort(AbortReason::ApduTooLong))
+    ));
+    assert_eq!(rpm_requests.load(Ordering::SeqCst), 0);
 }
 
 #[test]
-fn object_list_falls_back_to_individual_indexes_when_rpm_is_unsupported() {
+fn object_list_does_not_fall_back_to_individual_indexes() {
     let device_id = 1234;
     let length = 3_u32;
     let individual_reads = Arc::new(AtomicUsize::new(0));
@@ -522,18 +527,15 @@ fn object_list_falls_back_to_individual_indexes_when_rpm_is_unsupported() {
         }
     });
 
-    let objects = test_client().read_object_list(addr, device_id).unwrap();
-    assert_eq!(
-        objects,
-        (1..=length)
-            .map(|index| object_for_index(device_id, index))
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(individual_reads.load(Ordering::SeqCst), length as usize);
+    assert!(matches!(
+        test_client().read_object_list(addr, device_id),
+        Err(ClientError::Abort(AbortReason::ApduTooLong))
+    ));
+    assert_eq!(individual_reads.load(Ordering::SeqCst), 0);
 }
 
 #[test]
-fn object_list_reduces_rpm_batch_size_after_apdu_too_long() {
+fn object_list_does_not_hide_abort_with_smaller_rpm_batches() {
     let device_id = 1234;
     let length = 4_u32;
     let rpm_requests = Arc::new(AtomicUsize::new(0));
@@ -585,67 +587,11 @@ fn object_list_reduces_rpm_batch_size_after_apdu_too_long() {
         }
     });
 
-    let objects = test_client().read_object_list(addr, device_id).unwrap();
-    assert_eq!(objects.len(), length as usize);
-    assert_eq!(rpm_requests.load(Ordering::SeqCst), 3);
-}
-
-#[cfg(feature = "async")]
-#[tokio::test]
-async fn object_list_async_stream_uses_the_same_fallback_engine() {
-    use tokio_stream::StreamExt;
-
-    let device_id = 1234;
-    let length = 40_u32;
-    let addr = spawn_request_device_loop(move |request| {
-        let Apdu::ConfirmedRequest {
-            invoke_id,
-            service_choice,
-            service_data,
-            ..
-        } = request
-        else {
-            unreachable!()
-        };
-        match service_choice {
-            ConfirmedServiceChoice::ReadProperty => {
-                let request = ReadPropertyRequest::decode(&service_data).unwrap();
-                match request.property_array_index {
-                    None => Apdu::Abort {
-                        server: true,
-                        invoke_id,
-                        abort_reason: AbortReason::ApduTooLong,
-                    },
-                    Some(0) => read_property_request_ack(
-                        invoke_id,
-                        &request,
-                        vec![PropertyValue::Unsigned(length.into())],
-                    ),
-                    index => panic!("unexpected individual array read {index:?}"),
-                }
-            }
-            ConfirmedServiceChoice::ReadPropertyMultiple => {
-                let request = ReadPropertyMultipleRequest::decode(&service_data).unwrap();
-                rpm_object_list_ack(invoke_id, &request, device_id)
-            }
-            service => panic!("unexpected service {service:?}"),
-        }
-    });
-
-    let client = Arc::new(test_client());
-    let mut stream = client.read_object_list_stream(addr, device_id);
-    let first = stream.next().await.unwrap().unwrap();
-    assert_eq!(first, ObjectIdentifier::new(ObjectType::Device, device_id));
-
-    let mut remaining = Vec::new();
-    while let Some(object) = stream.next().await {
-        remaining.push(object.unwrap());
-    }
-    assert_eq!(remaining.len(), length as usize - 1);
-    assert_eq!(
-        remaining.last(),
-        Some(&ObjectIdentifier::new(ObjectType::AnalogValue, 39))
-    );
+    assert!(matches!(
+        test_client().read_object_list(addr, device_id),
+        Err(ClientError::Abort(AbortReason::ApduTooLong))
+    ));
+    assert_eq!(rpm_requests.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -700,7 +646,7 @@ fn object_properties_prefers_one_rpm_all_request_and_retains_property_errors() {
 }
 
 #[test]
-fn object_properties_falls_back_to_individual_reads_without_rpm() {
+fn object_properties_surfaces_unsupported_rpm_without_rp_fallback() {
     let object = ObjectIdentifier::new(ObjectType::AnalogValue, 7);
     let rpm_requests = Arc::new(AtomicUsize::new(0));
     let observed_rpm_requests = Arc::clone(&rpm_requests);
@@ -756,23 +702,15 @@ fn object_properties_falls_back_to_individual_reads_without_rpm() {
         }
     });
 
-    let snapshot = test_client().read_object_properties(addr, object).unwrap();
-
-    assert_eq!(snapshot.properties.len(), 6);
-    let description = snapshot
-        .properties
-        .iter()
-        .find(|property| property.property_identifier == PropertyIdentifier::Description)
-        .unwrap();
-    assert_eq!(
-        description.outcome,
-        PropertyReadOutcome::Error { class: 2, code: 32 }
-    );
-    assert_eq!(rpm_requests.load(Ordering::SeqCst), 2);
+    assert!(matches!(
+        test_client().read_object_properties(addr, object),
+        Err(ClientError::Rejected(RejectReason::UnrecognizedService))
+    ));
+    assert_eq!(rpm_requests.load(Ordering::SeqCst), 1);
 }
 
 #[test]
-fn object_properties_reduces_rpm_batch_size_after_apdu_too_long() {
+fn object_properties_surfaces_rpm_abort_without_smaller_batches() {
     let object = ObjectIdentifier::new(ObjectType::AnalogValue, 7);
     let advertised = [
         PropertyIdentifier::PresentValue,
@@ -781,7 +719,6 @@ fn object_properties_reduces_rpm_batch_size_after_apdu_too_long() {
         PropertyIdentifier::Units,
         PropertyIdentifier::OutOfService,
     ];
-    let expected_property_count = advertised.len() + 4;
     let rpm_batches = Arc::new(AtomicUsize::new(0));
     let observed_rpm_batches = Arc::clone(&rpm_batches);
     let addr = spawn_request_device_loop(move |request| {
@@ -851,10 +788,11 @@ fn object_properties_reduces_rpm_batch_size_after_apdu_too_long() {
         }
     });
 
-    let snapshot = test_client().read_object_properties(addr, object).unwrap();
-
-    assert_eq!(snapshot.properties.len(), expected_property_count);
-    assert!(rpm_batches.load(Ordering::SeqCst) > 3);
+    assert!(matches!(
+        test_client().read_object_properties(addr, object),
+        Err(ClientError::Abort(AbortReason::ApduTooLong))
+    ));
+    assert_eq!(rpm_batches.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -875,69 +813,4 @@ fn write_property_accepts_simple_ack() {
             Some(8),
         )
         .expect("write should be acknowledged");
-}
-
-#[test]
-fn write_property_verified_confirms_when_readback_matches() {
-    let object = ObjectIdentifier::new(ObjectType::AnalogValue, 1);
-
-    // Two requests: WriteProperty -> SimpleAck, then ReadProperty -> the value
-    // we just wrote, so the verify succeeds.
-    let addr = spawn_device_loop(move |invoke_id, service_choice| match service_choice {
-        ConfirmedServiceChoice::WriteProperty => Apdu::SimpleAck {
-            invoke_id,
-            service_choice: ConfirmedServiceChoice::WriteProperty as u8,
-        },
-        ConfirmedServiceChoice::ReadProperty => {
-            read_property_ack(invoke_id, object, PropertyValue::Real(3.0))
-        }
-        other => panic!("unexpected service {other:?}"),
-    });
-
-    let outcome = test_client()
-        .write_property_verified(
-            addr,
-            object,
-            PropertyIdentifier::PresentValue,
-            &PropertyValue::Real(3.0),
-            Some(8),
-        )
-        .expect("write+verify should not error");
-
-    assert_eq!(outcome, WriteOutcome::Verified);
-}
-
-#[test]
-fn write_property_verified_reports_not_effective_when_overridden() {
-    let object = ObjectIdentifier::new(ObjectType::AnalogValue, 4);
-
-    // Device accepts the write (SimpleAck) but the read-back still reports the
-    // old value 2.0 — e.g. a higher-priority slot is winning.
-    let addr = spawn_device_loop(move |invoke_id, service_choice| match service_choice {
-        ConfirmedServiceChoice::WriteProperty => Apdu::SimpleAck {
-            invoke_id,
-            service_choice: ConfirmedServiceChoice::WriteProperty as u8,
-        },
-        ConfirmedServiceChoice::ReadProperty => {
-            read_property_ack(invoke_id, object, PropertyValue::Real(2.0))
-        }
-        other => panic!("unexpected service {other:?}"),
-    });
-
-    let outcome = test_client()
-        .write_property_verified(
-            addr,
-            object,
-            PropertyIdentifier::PresentValue,
-            &PropertyValue::Real(3.0),
-            Some(8),
-        )
-        .expect("write+verify should not error");
-
-    assert_eq!(
-        outcome,
-        WriteOutcome::NotEffective {
-            read_back: PropertyValue::Real(2.0)
-        }
-    );
 }

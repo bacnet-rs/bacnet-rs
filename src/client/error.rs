@@ -10,7 +10,7 @@ use crate::service::{AbortReason, RejectReason};
 use crate::util::describe_bacnet_error;
 use thiserror::Error;
 
-/// Errors that can occur while using the high-level [`BacnetClient`](super::BacnetClient).
+/// Errors returned by the synchronous and asynchronous high-level clients.
 #[derive(Debug, Error)]
 pub enum ClientError {
     /// An underlying socket / I/O operation failed.
@@ -33,6 +33,14 @@ pub enum ClientError {
     /// A response was expected but the peer returned nothing usable.
     #[error("no response from device")]
     NoResponse,
+
+    /// The asynchronous client endpoint stopped before completing the request.
+    #[error("BACnet client endpoint is closed")]
+    EndpointClosed,
+
+    /// Every BACnet invoke ID is currently assigned to an outstanding request.
+    #[error("all BACnet invoke IDs are in use")]
+    TooManyTransactions,
 
     /// The remote device rejected the request at the application layer.
     #[error("request rejected: {0}")]

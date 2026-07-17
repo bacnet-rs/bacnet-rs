@@ -338,7 +338,7 @@ mod tests {
     use std::{thread, time::Duration};
 
     use crate::{
-        client::BacnetClient,
+        client::{BacnetClient, PropertyReadOutcome},
         object::{
             AnalogValue, Device, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue,
         },
@@ -408,10 +408,18 @@ mod tests {
             vec![PropertyValue::Real(21.5)]
         );
 
-        let objects = client.read_objects_properties(address, &[object]).unwrap();
-        assert_eq!(objects.len(), 1);
-        assert_eq!(objects[0].object_name.as_deref(), Some("Setpoint"));
-        assert_eq!(objects[0].present_value, Some(PropertyValue::Real(21.5)));
+        let snapshot = client.read_object_properties(address, object).unwrap();
+        assert!(snapshot.properties.iter().any(|property| {
+            property.property_identifier == PropertyIdentifier::ObjectName
+                && property.outcome
+                    == PropertyReadOutcome::Value(vec![PropertyValue::CharacterString(
+                        "Setpoint".into(),
+                    )])
+        }));
+        assert!(snapshot.properties.iter().any(|property| {
+            property.property_identifier == PropertyIdentifier::PresentValue
+                && property.outcome == PropertyReadOutcome::Value(vec![PropertyValue::Real(21.5)])
+        }));
 
         client
             .write_property(
