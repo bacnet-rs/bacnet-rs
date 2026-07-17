@@ -86,6 +86,7 @@ fn error_code_name(code: u32) -> Option<&'static str> {
         32 => "unknown-property",
         37 => "value-out-of-range",
         40 => "write-access-denied",
+        42 => "invalid-array-index",
         44 => "not-cov-property",
         45 => "optional-functionality-not-supported",
         47 => "datatype-not-supported",

@@ -141,6 +141,8 @@ pub type Result<T> = core::result::Result<T, ObjectError>;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+pub use crate::property::{BacnetValue, PropertyValue};
+
 /// Errors that can occur with object operations
 #[derive(Debug)]
 pub enum ObjectError {
@@ -156,6 +158,10 @@ pub enum ObjectError {
     UnknownProperty,
     /// Property not writable
     PropertyNotWritable,
+    /// An array index was used with a property that is not an array.
+    PropertyIsNotArray,
+    /// An array index was outside the property's bounds.
+    InvalidArrayIndex,
     /// Invalid property type
     InvalidPropertyType,
     /// Invalid property value
@@ -175,6 +181,8 @@ impl fmt::Display for ObjectError {
             ObjectError::PropertyNotFound => write!(f, "Property not found"),
             ObjectError::UnknownProperty => write!(f, "Unknown property"),
             ObjectError::PropertyNotWritable => write!(f, "Property not writable"),
+            ObjectError::PropertyIsNotArray => write!(f, "Property is not an array"),
+            ObjectError::InvalidArrayIndex => write!(f, "Invalid array index"),
             ObjectError::InvalidPropertyType => write!(f, "Invalid property type"),
             ObjectError::InvalidValue(msg) => write!(f, "Invalid value: {}", msg),
             ObjectError::WriteAccessDenied => write!(f, "Write access denied"),
@@ -245,31 +253,22 @@ pub trait BacnetObject: Send + Sync {
     /// Set a property value
     fn set_property(&mut self, property: PropertyIdentifier, value: PropertyValue) -> Result<()>;
 
+    /// Set a property with the optional BACnet command priority supplied by a
+    /// WriteProperty request.
+    fn set_property_with_priority(
+        &mut self,
+        property: PropertyIdentifier,
+        value: PropertyValue,
+        _priority: Option<u8>,
+    ) -> Result<()> {
+        self.set_property(property, value)
+    }
+
     /// Check if property is writable
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool;
 
     /// Get list of all properties
     fn property_list(&self) -> Vec<PropertyIdentifier>;
-}
-
-/// Property values can be of various types
-#[derive(Debug, Clone)]
-pub enum PropertyValue {
-    Null,
-    Boolean(bool),
-    UnsignedInteger(u32),
-    SignedInt(i32),
-    Real(f32),
-    Double(f64),
-    OctetString(Vec<u8>),
-    CharacterString(String),
-    BitString(Vec<bool>),
-    Enumerated(u32),
-    Date(Date),
-    Time(Time),
-    ObjectIdentifier(ObjectIdentifier),
-    Array(Vec<PropertyValue>),
-    List(Vec<PropertyValue>),
 }
 
 /// BACnet date representation
@@ -425,9 +424,9 @@ impl BacnetObject for Device {
             PropertyIdentifier::VendorName => {
                 Ok(PropertyValue::CharacterString(self.vendor_name.clone()))
             }
-            PropertyIdentifier::VendorIdentifier => Ok(PropertyValue::UnsignedInteger(
-                self.vendor_identifier as u32,
-            )),
+            PropertyIdentifier::VendorIdentifier => {
+                Ok(PropertyValue::Unsigned(self.vendor_identifier.into()))
+            }
             PropertyIdentifier::ModelName => {
                 Ok(PropertyValue::CharacterString(self.model_name.clone()))
             }
@@ -438,19 +437,19 @@ impl BacnetObject for Device {
                 self.application_software_version.clone(),
             )),
             PropertyIdentifier::ProtocolVersion => {
-                Ok(PropertyValue::UnsignedInteger(self.protocol_version as u32))
+                Ok(PropertyValue::Unsigned(self.protocol_version.into()))
             }
-            PropertyIdentifier::ProtocolRevision => Ok(PropertyValue::UnsignedInteger(
-                self.protocol_revision as u32,
-            )),
-            PropertyIdentifier::MaxApduLengthAccepted => Ok(PropertyValue::UnsignedInteger(
-                self.max_apdu_length_accepted as u32,
+            PropertyIdentifier::ProtocolRevision => {
+                Ok(PropertyValue::Unsigned(self.protocol_revision.into()))
+            }
+            PropertyIdentifier::MaxApduLengthAccepted => Ok(PropertyValue::Unsigned(
+                self.max_apdu_length_accepted.into(),
             )),
             PropertyIdentifier::SegmentationSupported => Ok(PropertyValue::Enumerated(
                 self.segmentation_supported as u32,
             )),
             PropertyIdentifier::DatabaseRevision => {
-                Ok(PropertyValue::UnsignedInteger(self.database_revision))
+                Ok(PropertyValue::Unsigned(self.database_revision.into()))
             }
             _ => Err(ObjectError::UnknownProperty),
         }
@@ -499,8 +498,10 @@ impl BacnetObject for Device {
                 }
             }
             PropertyIdentifier::DatabaseRevision => {
-                if let PropertyValue::UnsignedInteger(revision) = value {
-                    self.database_revision = revision;
+                if let PropertyValue::Unsigned(revision) = value {
+                    self.database_revision = revision
+                        .try_into()
+                        .map_err(|_| ObjectError::InvalidPropertyType)?;
                     Ok(())
                 } else {
                     Err(ObjectError::InvalidPropertyType)

@@ -299,7 +299,7 @@ impl BacnetObject for MultiStateInput {
                 ObjectType::MultiStateInput,
             ))),
             PropertyIdentifier::PresentValue => {
-                Ok(PropertyValue::UnsignedInteger(self.present_value))
+                Ok(PropertyValue::Unsigned(self.present_value.into()))
             }
             PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
             _ => Err(ObjectError::UnknownProperty),
@@ -363,7 +363,7 @@ impl BacnetObject for MultiStateOutput {
                 ObjectType::MultiStateOutput,
             ))),
             PropertyIdentifier::PresentValue => {
-                Ok(PropertyValue::UnsignedInteger(self.present_value))
+                Ok(PropertyValue::Unsigned(self.present_value.into()))
             }
             PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
             PropertyIdentifier::PriorityArray => {
@@ -371,7 +371,7 @@ impl BacnetObject for MultiStateOutput {
                     .priority_array
                     .iter()
                     .map(|&v| match v {
-                        Some(val) => PropertyValue::UnsignedInteger(val),
+                        Some(val) => PropertyValue::Unsigned(val.into()),
                         None => PropertyValue::Null,
                     })
                     .collect();
@@ -392,12 +392,7 @@ impl BacnetObject for MultiStateOutput {
                 }
             }
             PropertyIdentifier::PresentValue => {
-                if let PropertyValue::UnsignedInteger(val) = value {
-                    // Write to priority 8 (manual operator) by default
-                    self.write_priority(8, Some(val))
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
+                self.set_property_with_priority(property, value, None)
             }
             PropertyIdentifier::OutOfService => {
                 if let PropertyValue::Boolean(oos) = value {
@@ -409,6 +404,29 @@ impl BacnetObject for MultiStateOutput {
             }
             _ => Err(ObjectError::PropertyNotWritable),
         }
+    }
+
+    fn set_property_with_priority(
+        &mut self,
+        property: PropertyIdentifier,
+        value: PropertyValue,
+        priority: Option<u8>,
+    ) -> Result<()> {
+        if property != PropertyIdentifier::PresentValue {
+            return self.set_property(property, value);
+        }
+
+        let priority = priority.unwrap_or(16);
+        let value = match value {
+            PropertyValue::Unsigned(value) => Some(
+                value
+                    .try_into()
+                    .map_err(|_| ObjectError::InvalidPropertyType)?,
+            ),
+            PropertyValue::Null => None,
+            _ => return Err(ObjectError::InvalidPropertyType),
+        };
+        self.write_priority(priority, value)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
@@ -449,7 +467,7 @@ impl BacnetObject for MultiStateValue {
                 ObjectType::MultiStateValue,
             ))),
             PropertyIdentifier::PresentValue => {
-                Ok(PropertyValue::UnsignedInteger(self.present_value))
+                Ok(PropertyValue::Unsigned(self.present_value.into()))
             }
             PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
             PropertyIdentifier::PriorityArray => {
@@ -457,7 +475,7 @@ impl BacnetObject for MultiStateValue {
                     .priority_array
                     .iter()
                     .map(|&v| match v {
-                        Some(val) => PropertyValue::UnsignedInteger(val),
+                        Some(val) => PropertyValue::Unsigned(val.into()),
                         None => PropertyValue::Null,
                     })
                     .collect();
@@ -478,12 +496,7 @@ impl BacnetObject for MultiStateValue {
                 }
             }
             PropertyIdentifier::PresentValue => {
-                if let PropertyValue::UnsignedInteger(val) = value {
-                    // Write to priority 8 (manual operator) by default
-                    self.write_priority(8, Some(val))
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
+                self.set_property_with_priority(property, value, None)
             }
             PropertyIdentifier::OutOfService => {
                 if let PropertyValue::Boolean(oos) = value {
@@ -495,6 +508,29 @@ impl BacnetObject for MultiStateValue {
             }
             _ => Err(ObjectError::PropertyNotWritable),
         }
+    }
+
+    fn set_property_with_priority(
+        &mut self,
+        property: PropertyIdentifier,
+        value: PropertyValue,
+        priority: Option<u8>,
+    ) -> Result<()> {
+        if property != PropertyIdentifier::PresentValue {
+            return self.set_property(property, value);
+        }
+
+        let priority = priority.unwrap_or(16);
+        let value = match value {
+            PropertyValue::Unsigned(value) => Some(
+                value
+                    .try_into()
+                    .map_err(|_| ObjectError::InvalidPropertyType)?,
+            ),
+            PropertyValue::Null => None,
+            _ => return Err(ObjectError::InvalidPropertyType),
+        };
+        self.write_priority(priority, value)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
@@ -573,6 +609,45 @@ mod tests {
     }
 
     #[test]
+    fn multistate_property_writes_preserve_priority_and_relinquish() {
+        let mut output = MultiStateOutput::new(1, "Sequence Control".to_string(), 4);
+        output
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Unsigned(3),
+                Some(2),
+            )
+            .unwrap();
+        assert_eq!(output.priority_array[1], Some(3));
+        output
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Null,
+                Some(2),
+            )
+            .unwrap();
+        assert_eq!(output.priority_array[1], None);
+
+        let mut value = MultiStateValue::new(2, "Operating Mode".to_string(), 4);
+        value
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Unsigned(4),
+                Some(5),
+            )
+            .unwrap();
+        assert_eq!(value.priority_array[4], Some(4));
+        value
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Null,
+                Some(5),
+            )
+            .unwrap();
+        assert_eq!(value.priority_array[4], None);
+    }
+
+    #[test]
     fn test_multistate_properties() {
         let mut msv = MultiStateValue::new(1, "Operating Mode".to_string(), 4);
 
@@ -585,11 +660,8 @@ mod tests {
         }
 
         // Test property modification
-        msv.set_property(
-            PropertyIdentifier::PresentValue,
-            PropertyValue::UnsignedInteger(3),
-        )
-        .unwrap();
+        msv.set_property(PropertyIdentifier::PresentValue, PropertyValue::Unsigned(3))
+            .unwrap();
         assert_eq!(msv.present_value, 3);
     }
 }

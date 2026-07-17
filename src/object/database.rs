@@ -166,6 +166,15 @@ impl ObjectDatabase {
         }
     }
 
+    /// Return the properties exposed by an object.
+    pub fn property_list(&self, identifier: ObjectIdentifier) -> Result<Vec<PropertyIdentifier>> {
+        let objects = self.objects.read().unwrap();
+        match objects.get(&identifier) {
+            Some(object) => Ok(object.property_list()),
+            None => Err(ObjectError::NotFound),
+        }
+    }
+
     /// Set a property value on an object
     pub fn set_property(
         &self,
@@ -177,6 +186,28 @@ impl ObjectDatabase {
         match objects.get_mut(&identifier) {
             Some(obj) => {
                 let result = obj.set_property(property, value);
+                if result.is_ok() {
+                    self.increment_revision();
+                }
+                result
+            }
+            None => Err(ObjectError::NotFound),
+        }
+    }
+
+    /// Set a property while preserving the command priority from the BACnet
+    /// request. Non-commandable objects use their normal property setter.
+    pub fn set_property_with_priority(
+        &self,
+        identifier: ObjectIdentifier,
+        property: PropertyIdentifier,
+        value: PropertyValue,
+        priority: Option<u8>,
+    ) -> Result<()> {
+        let mut objects = self.objects.write().unwrap();
+        match objects.get_mut(&identifier) {
+            Some(object) => {
+                let result = object.set_property_with_priority(property, value, priority);
                 if result.is_ok() {
                     self.increment_revision();
                 }
@@ -285,8 +316,8 @@ impl ObjectDatabase {
         match (a, b) {
             (PropertyValue::Null, PropertyValue::Null) => true,
             (PropertyValue::Boolean(a), PropertyValue::Boolean(b)) => a == b,
-            (PropertyValue::UnsignedInteger(a), PropertyValue::UnsignedInteger(b)) => a == b,
-            (PropertyValue::SignedInt(a), PropertyValue::SignedInt(b)) => a == b,
+            (PropertyValue::Unsigned(a), PropertyValue::Unsigned(b)) => a == b,
+            (PropertyValue::Signed(a), PropertyValue::Signed(b)) => a == b,
             (PropertyValue::Real(a), PropertyValue::Real(b)) => (a - b).abs() < f32::EPSILON,
             (PropertyValue::Double(a), PropertyValue::Double(b)) => (a - b).abs() < f64::EPSILON,
             (PropertyValue::CharacterString(a), PropertyValue::CharacterString(b)) => a == b,

@@ -841,13 +841,11 @@ impl WritePropertyRequest {
         buffer.extend_from_slice(&object_id.to_be_bytes());
 
         // Property identifier - context tag 1
-        buffer.push(0x19); // Context tag 1, length 1
-        buffer.push(self.property_identifier as u8);
+        buffer.extend_from_slice(&encode_context_enumerated(self.property_identifier, 1)?);
 
         // Property array index - context tag 2 (optional)
         if let Some(array_index) = self.property_array_index {
-            buffer.push(0x29); // Context tag 2, length 1
-            buffer.push(array_index as u8);
+            buffer.extend_from_slice(&encode_context_unsigned(array_index, 2)?);
         }
 
         // Property value - context tag 3 (opening tag)
@@ -880,21 +878,16 @@ impl WritePropertyRequest {
         pos += 4;
 
         // Decode property identifier - context tag 1
-        if pos + 2 > data.len() || data[pos] != 0x19 {
-            return Err(crate::encoding::EncodingError::InvalidTag);
-        }
-        pos += 1;
-        let property_identifier = data[pos] as u32;
-        pos += 1;
+        let (property_identifier, consumed) = decode_context_enumerated(&data[pos..], 1)?;
+        pos += consumed;
 
         // Property array index - context tag 2 (optional)
-        let property_array_index = if pos < data.len() && data[pos] == 0x29 {
-            pos += 1;
-            let array_index = data[pos] as u32;
-            pos += 1;
-            Some(array_index)
-        } else {
-            None
+        let property_array_index = match decode_context_unsigned(&data[pos..], 2) {
+            Ok((array_index, consumed)) => {
+                pos += consumed;
+                Some(array_index)
+            }
+            Err(_) => None,
         };
 
         // Property value - context tag 3 (opening tag)
@@ -2126,6 +2119,25 @@ mod tests {
         assert_eq!(decoded.object_identifier.instance, 1);
         assert_eq!(decoded.property_identifier, 85);
         assert_eq!(decoded.property_value, property_value);
+
+        // Context encoding must preserve identifiers and array indexes that do
+        // not fit in the one-byte forms.
+        let mut extended = WritePropertyRequest::with_array_index(
+            object_id,
+            u32::from(PropertyIdentifier::PropertyList),
+            300,
+            property_value,
+        );
+        extended.priority = Some(16);
+        let mut buffer = Vec::new();
+        extended.encode(&mut buffer).unwrap();
+        let decoded = WritePropertyRequest::decode(&buffer).unwrap();
+        assert_eq!(
+            decoded.property_identifier,
+            u32::from(PropertyIdentifier::PropertyList)
+        );
+        assert_eq!(decoded.property_array_index, Some(300));
+        assert_eq!(decoded.priority, Some(16));
     }
 
     #[test]

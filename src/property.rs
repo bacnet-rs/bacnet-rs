@@ -53,11 +53,18 @@ pub enum PropertyValue {
     Time(u8, u8, u8, u8),
     /// Object identifier value
     ObjectIdentifier(ObjectIdentifier), // (object_type, instance)
+    /// An ordered array of property values.
+    Array(Vec<PropertyValue>),
+    /// An ordered list of property values.
+    List(Vec<PropertyValue>),
     /// Null value
     Null,
     /// Unknown/unsupported value type
     Unknown(Vec<u8>),
 }
+
+/// General BACnet value name used outside property-specific APIs.
+pub type BacnetValue = PropertyValue;
 
 impl PropertyValue {
     /// Get the value as a display string
@@ -86,6 +93,8 @@ impl PropertyValue {
             PropertyValue::ObjectIdentifier(id) => {
                 format!("Object({}, {})", id.object_type, id.instance)
             }
+            PropertyValue::Array(values) => format_collection("Array", values),
+            PropertyValue::List(values) => format_collection("List", values),
             PropertyValue::Null => "Null".to_string(),
             PropertyValue::Unknown(_) => "Unknown".to_string(),
         }
@@ -222,11 +231,25 @@ pub fn encode_property_value(
         PropertyValue::Date(y, m, d, w) => encode_date(buffer, *y, *m, *d, *w)?,
         PropertyValue::Time(h, m, s, hs) => encode_time(buffer, *h, *m, *s, *hs)?,
         PropertyValue::ObjectIdentifier(id) => encode_object_identifier(buffer, *id)?,
+        PropertyValue::Array(values) | PropertyValue::List(values) => {
+            for value in values {
+                encode_property_value(value, buffer)?;
+            }
+        }
         PropertyValue::Null => encode_application_tag(buffer, ApplicationTag::Null, 0),
         PropertyValue::Unknown(data) => buffer.extend_from_slice(data),
     }
 
     Ok(())
+}
+
+fn format_collection(name: &str, values: &[PropertyValue]) -> String {
+    let values = values
+        .iter()
+        .map(PropertyValue::as_display_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{name}([{values}])")
 }
 
 #[cfg(test)]

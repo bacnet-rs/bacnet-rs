@@ -437,21 +437,7 @@ impl BacnetObject for BinaryOutput {
                 }
             }
             PropertyIdentifier::PresentValue => {
-                if let PropertyValue::Enumerated(val) = value {
-                    let binary_val = match val {
-                        0 => BinaryPV::Inactive,
-                        1 => BinaryPV::Active,
-                        _ => {
-                            return Err(ObjectError::InvalidValue(
-                                "Binary value must be 0 or 1".to_string(),
-                            ))
-                        }
-                    };
-                    // Write to priority 8 (manual operator) by default
-                    self.write_priority(8, Some(binary_val))
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
+                self.set_property_with_priority(property, value, None)
             }
             PropertyIdentifier::OutOfService => {
                 if let PropertyValue::Boolean(oos) = value {
@@ -463,6 +449,31 @@ impl BacnetObject for BinaryOutput {
             }
             _ => Err(ObjectError::PropertyNotWritable),
         }
+    }
+
+    fn set_property_with_priority(
+        &mut self,
+        property: PropertyIdentifier,
+        value: PropertyValue,
+        priority: Option<u8>,
+    ) -> Result<()> {
+        if property != PropertyIdentifier::PresentValue {
+            return self.set_property(property, value);
+        }
+
+        let priority = priority.unwrap_or(16);
+        let value = match value {
+            PropertyValue::Enumerated(0) => Some(BinaryPV::Inactive),
+            PropertyValue::Enumerated(1) => Some(BinaryPV::Active),
+            PropertyValue::Enumerated(_) => {
+                return Err(ObjectError::InvalidValue(
+                    "Binary value must be 0 or 1".to_string(),
+                ))
+            }
+            PropertyValue::Null => None,
+            _ => return Err(ObjectError::InvalidPropertyType),
+        };
+        self.write_priority(priority, value)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
@@ -532,21 +543,7 @@ impl BacnetObject for BinaryValue {
                 }
             }
             PropertyIdentifier::PresentValue => {
-                if let PropertyValue::Enumerated(val) = value {
-                    let binary_val = match val {
-                        0 => BinaryPV::Inactive,
-                        1 => BinaryPV::Active,
-                        _ => {
-                            return Err(ObjectError::InvalidValue(
-                                "Binary value must be 0 or 1".to_string(),
-                            ))
-                        }
-                    };
-                    // Write to priority 8 (manual operator) by default
-                    self.write_priority(8, Some(binary_val))
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
+                self.set_property_with_priority(property, value, None)
             }
             PropertyIdentifier::OutOfService => {
                 if let PropertyValue::Boolean(oos) = value {
@@ -558,6 +555,31 @@ impl BacnetObject for BinaryValue {
             }
             _ => Err(ObjectError::PropertyNotWritable),
         }
+    }
+
+    fn set_property_with_priority(
+        &mut self,
+        property: PropertyIdentifier,
+        value: PropertyValue,
+        priority: Option<u8>,
+    ) -> Result<()> {
+        if property != PropertyIdentifier::PresentValue {
+            return self.set_property(property, value);
+        }
+
+        let priority = priority.unwrap_or(16);
+        let value = match value {
+            PropertyValue::Enumerated(0) => Some(BinaryPV::Inactive),
+            PropertyValue::Enumerated(1) => Some(BinaryPV::Active),
+            PropertyValue::Enumerated(_) => {
+                return Err(ObjectError::InvalidValue(
+                    "Binary value must be 0 or 1".to_string(),
+                ))
+            }
+            PropertyValue::Null => None,
+            _ => return Err(ObjectError::InvalidPropertyType),
+        };
+        self.write_priority(priority, value)
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
@@ -635,6 +657,45 @@ mod tests {
         bo.write_priority(3, None).unwrap();
         assert_eq!(bo.present_value, BinaryPV::Active);
         assert_eq!(bo.get_effective_priority(), Some(8));
+    }
+
+    #[test]
+    fn binary_property_writes_preserve_priority_and_relinquish() {
+        let mut output = BinaryOutput::new(1, "Fan Control".to_string());
+        output
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Enumerated(1),
+                Some(3),
+            )
+            .unwrap();
+        assert_eq!(output.priority_array[2], Some(BinaryPV::Active));
+        output
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Null,
+                Some(3),
+            )
+            .unwrap();
+        assert_eq!(output.priority_array[2], None);
+
+        let mut value = BinaryValue::new(2, "Occupancy".to_string());
+        value
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Enumerated(1),
+                Some(4),
+            )
+            .unwrap();
+        assert_eq!(value.priority_array[3], Some(BinaryPV::Active));
+        value
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Null,
+                Some(4),
+            )
+            .unwrap();
+        assert_eq!(value.priority_array[3], None);
     }
 
     #[test]

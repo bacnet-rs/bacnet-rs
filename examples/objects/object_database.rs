@@ -359,8 +359,8 @@ fn format_property_value(value: &PropertyValue) -> String {
     match value {
         PropertyValue::Null => "null".to_string(),
         PropertyValue::Boolean(b) => b.to_string(),
-        PropertyValue::UnsignedInteger(u) => u.to_string(),
-        PropertyValue::SignedInt(i) => i.to_string(),
+        PropertyValue::Unsigned(u) => u.to_string(),
+        PropertyValue::Signed(i) => i.to_string(),
         PropertyValue::Real(r) => format!("{:.2}", r),
         PropertyValue::Double(d) => format!("{:.2}", d),
         PropertyValue::CharacterString(s) => format!("\"{}\"", s),

@@ -379,12 +379,7 @@ impl BacnetObject for AnalogOutput {
                 }
             }
             PropertyIdentifier::PresentValue => {
-                if let PropertyValue::Real(val) = value {
-                    // Write to priority 8 (manual operator) by default
-                    self.write_priority(8, Some(val))
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
+                self.set_property_with_priority(property, value, None)
             }
             PropertyIdentifier::OutOfService => {
                 if let PropertyValue::Boolean(oos) = value {
@@ -395,6 +390,24 @@ impl BacnetObject for AnalogOutput {
                 }
             }
             _ => Err(ObjectError::PropertyNotWritable),
+        }
+    }
+
+    fn set_property_with_priority(
+        &mut self,
+        property: PropertyIdentifier,
+        value: PropertyValue,
+        priority: Option<u8>,
+    ) -> Result<()> {
+        if property != PropertyIdentifier::PresentValue {
+            return self.set_property(property, value);
+        }
+
+        let priority = priority.unwrap_or(16);
+        match value {
+            PropertyValue::Real(value) => self.write_priority(priority, Some(value)),
+            PropertyValue::Null => self.write_priority(priority, None),
+            _ => Err(ObjectError::InvalidPropertyType),
         }
     }
 
@@ -436,7 +449,23 @@ impl BacnetObject for AnalogValue {
                 ObjectType::AnalogValue,
             ))),
             PropertyIdentifier::PresentValue => Ok(PropertyValue::Real(self.present_value)),
+            PropertyIdentifier::Description => {
+                Ok(PropertyValue::CharacterString(self.description.clone()))
+            }
+            PropertyIdentifier::StatusFlags => Ok(PropertyValue::BitString(vec![
+                self.status_flags & 0x08 != 0,
+                self.status_flags & 0x04 != 0,
+                self.status_flags & 0x02 != 0,
+                self.status_flags & 0x01 != 0,
+            ])),
+            PropertyIdentifier::EventState => Ok(PropertyValue::Enumerated(
+                u16::from(self.event_state).into(),
+            )),
+            PropertyIdentifier::Reliability => {
+                Ok(PropertyValue::Enumerated(self.reliability.into()))
+            }
             PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
+            PropertyIdentifier::Units => Ok(PropertyValue::Enumerated(self.units.into())),
             PropertyIdentifier::PriorityArray => {
                 let array: Vec<PropertyValue> = self
                     .priority_array
@@ -448,6 +477,13 @@ impl BacnetObject for AnalogValue {
                     .collect();
                 Ok(PropertyValue::Array(array))
             }
+            PropertyIdentifier::RelinquishDefault => {
+                Ok(PropertyValue::Real(self.relinquish_default))
+            }
+            PropertyIdentifier::CovIncrement => self
+                .cov_increment
+                .map(PropertyValue::Real)
+                .ok_or(ObjectError::UnknownProperty),
             _ => Err(ObjectError::UnknownProperty),
         }
     }
@@ -463,12 +499,7 @@ impl BacnetObject for AnalogValue {
                 }
             }
             PropertyIdentifier::PresentValue => {
-                if let PropertyValue::Real(val) = value {
-                    // Write to priority 8 (manual operator) by default
-                    self.write_priority(8, Some(val))
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
+                self.set_property_with_priority(property, value, None)
             }
             PropertyIdentifier::OutOfService => {
                 if let PropertyValue::Boolean(oos) = value {
@@ -482,6 +513,24 @@ impl BacnetObject for AnalogValue {
         }
     }
 
+    fn set_property_with_priority(
+        &mut self,
+        property: PropertyIdentifier,
+        value: PropertyValue,
+        priority: Option<u8>,
+    ) -> Result<()> {
+        if property != PropertyIdentifier::PresentValue {
+            return self.set_property(property, value);
+        }
+
+        let priority = priority.unwrap_or(16);
+        match value {
+            PropertyValue::Real(value) => self.write_priority(priority, Some(value)),
+            PropertyValue::Null => self.write_priority(priority, None),
+            _ => Err(ObjectError::InvalidPropertyType),
+        }
+    }
+
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
         matches!(
             property,
@@ -492,14 +541,24 @@ impl BacnetObject for AnalogValue {
     }
 
     fn property_list(&self) -> Vec<PropertyIdentifier> {
-        vec![
+        let mut properties = vec![
             PropertyIdentifier::ObjectIdentifier,
             PropertyIdentifier::ObjectName,
             PropertyIdentifier::ObjectType,
             PropertyIdentifier::PresentValue,
+            PropertyIdentifier::Description,
+            PropertyIdentifier::StatusFlags,
+            PropertyIdentifier::EventState,
+            PropertyIdentifier::Reliability,
             PropertyIdentifier::OutOfService,
+            PropertyIdentifier::Units,
             PropertyIdentifier::PriorityArray,
-        ]
+            PropertyIdentifier::RelinquishDefault,
+        ];
+        if self.cov_increment.is_some() {
+            properties.push(PropertyIdentifier::CovIncrement);
+        }
+        properties
     }
 }
 
@@ -539,6 +598,29 @@ mod tests {
         ao.write_priority(8, None).unwrap();
         assert_eq!(ao.present_value, ao.relinquish_default);
         assert_eq!(ao.get_effective_priority(), None);
+    }
+
+    #[test]
+    fn analog_output_property_write_preserves_priority_and_relinquishes() {
+        let mut output = AnalogOutput::new(1, "Damper Position".to_string());
+
+        output
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Real(50.0),
+                Some(3),
+            )
+            .unwrap();
+        assert_eq!(output.priority_array[2], Some(50.0));
+
+        output
+            .set_property_with_priority(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Null,
+                Some(3),
+            )
+            .unwrap();
+        assert_eq!(output.priority_array[2], None);
     }
 
     #[test]
