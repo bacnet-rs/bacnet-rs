@@ -7,14 +7,16 @@
 //! `AsyncBacnetIpServer` provides bounded concurrent request handling over a
 //! single Tokio UDP socket.
 
+mod address_cache;
 mod bip;
 mod dispatcher;
 mod error;
 mod object_service;
 
+pub use address_cache::AddressCache;
 #[cfg(feature = "async")]
 pub use bip::AsyncBacnetIpServer;
-pub use bip::BacnetIpServer;
+pub use bip::{BacnetIpServer, Notifier};
 pub use dispatcher::{ServerDispatcher, ServerResponse};
 pub use error::ServerError;
 pub use object_service::ObjectService;

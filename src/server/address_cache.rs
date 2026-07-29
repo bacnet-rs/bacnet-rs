@@ -1,0 +1,133 @@
+//! Learned bindings from BACnet device identifiers to network addresses.
+//!
+//! A `Recipient_List` entry names *who* to notify — `device,5785` — but not where
+//! that device lives. BACnet's answer is dynamic binding through Who-Is/I-Am,
+//! which a hosted device would have to originate and then correlate.
+//!
+//! A recipient that registers itself hands us the answer for free: the
+//! WriteProperty that adds it to the list arrives *from* that recipient. Binding
+//! the identifiers named in the payload to the request's source address needs no
+//! extra traffic and is how a gateway actually enrols itself.
+
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
+
+use crate::object::ObjectIdentifier;
+use crate::property::Recipient;
+
+/// Device-to-address bindings shared between the request path that learns them
+/// and the notification path that uses them.
+#[derive(Clone, Default)]
+pub struct AddressCache {
+    bindings: Arc<RwLock<HashMap<ObjectIdentifier, SocketAddr>>>,
+}
+
+impl AddressCache {
+    /// An empty cache.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Bind `device` to `address`, replacing any previous binding.
+    pub fn learn(&self, device: ObjectIdentifier, address: SocketAddr) {
+        self.bindings.write().unwrap().insert(device, address);
+    }
+
+    /// The address bound to `device`, if one has been learned.
+    pub fn lookup(&self, device: ObjectIdentifier) -> Option<SocketAddr> {
+        self.bindings.read().unwrap().get(&device).copied()
+    }
+
+    /// Resolve a `Recipient_List` recipient to an address.
+    ///
+    /// A `Recipient::Address` carries its own MAC; only BACnet/IP MACs — six
+    /// octets of address and port — can be turned into a socket address here.
+    pub fn resolve(&self, recipient: &Recipient) -> Option<SocketAddr> {
+        match recipient {
+            Recipient::Device(device) => self.lookup(*device),
+            Recipient::Address(address) => socket_address_from_mac(&address.mac_address),
+        }
+    }
+
+    /// Every binding currently held, for persisting across restarts.
+    pub fn bindings(&self) -> Vec<(ObjectIdentifier, SocketAddr)> {
+        self.bindings
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(device, address)| (*device, *address))
+            .collect()
+    }
+}
+
+/// Interpret a BACnet/IP MAC as an address: four octets of IPv4 then a port.
+fn socket_address_from_mac(mac: &[u8]) -> Option<SocketAddr> {
+    if mac.len() != 6 {
+        return None;
+    }
+    let octets = [mac[0], mac[1], mac[2], mac[3]];
+    let port = u16::from_be_bytes([mac[4], mac[5]]);
+    Some(SocketAddr::from((octets, port)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::object::ObjectType;
+    use crate::property::BacnetAddress;
+
+    fn gateway() -> ObjectIdentifier {
+        ObjectIdentifier::new(ObjectType::Device, 5785)
+    }
+
+    #[test]
+    fn a_learned_binding_resolves_a_device_recipient() {
+        let cache = AddressCache::new();
+        assert!(cache.resolve(&Recipient::Device(gateway())).is_none());
+
+        let address: SocketAddr = "192.168.6.1:47808".parse().unwrap();
+        cache.learn(gateway(), address);
+
+        assert_eq!(cache.resolve(&Recipient::Device(gateway())), Some(address));
+    }
+
+    #[test]
+    fn learning_again_replaces_the_binding() {
+        let cache = AddressCache::new();
+        cache.learn(gateway(), "192.168.6.1:47808".parse().unwrap());
+        cache.learn(gateway(), "192.168.6.9:47808".parse().unwrap());
+
+        assert_eq!(
+            cache.resolve(&Recipient::Device(gateway())),
+            Some("192.168.6.9:47808".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn an_address_recipient_resolves_without_a_binding() {
+        let cache = AddressCache::new();
+        let recipient = Recipient::Address(BacnetAddress {
+            network: 0,
+            mac_address: vec![192, 168, 6, 1, 0xBA, 0xC0],
+        });
+
+        assert_eq!(
+            cache.resolve(&recipient),
+            Some("192.168.6.1:47808".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn a_non_ip_mac_does_not_resolve() {
+        let cache = AddressCache::new();
+        let recipient = Recipient::Address(BacnetAddress {
+            network: 1,
+            mac_address: vec![0x0A],
+        });
+
+        assert!(cache.resolve(&recipient).is_none());
+    }
+}

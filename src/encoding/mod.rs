@@ -857,17 +857,26 @@ pub fn decode_double(data: &[u8]) -> Result<(f64, usize)> {
 
 /// Encode a context-specific tag
 pub fn encode_context_tag(buffer: &mut Vec<u8>, tag_number: u8, length: usize) -> Result<()> {
-    if tag_number > 14 {
-        return Err(EncodingError::ValueOutOfRange);
-    }
+    // Tag numbers above 14 use the extended form of clause 20.2.1.2: the tag
+    // nibble becomes B'1111' and the real tag number follows the initial octet,
+    // ahead of any extended length octets.
+    let tag_nibble = if tag_number > 14 {
+        0xF0
+    } else {
+        tag_number << 4
+    };
 
     let tag_byte = if length < 5 {
-        0x08 | (tag_number << 4) | (length as u8)
+        0x08 | tag_nibble | (length as u8)
     } else {
-        0x08 | (tag_number << 4) | 5
+        0x08 | tag_nibble | 5
     };
 
     buffer.push(tag_byte);
+
+    if tag_number > 14 {
+        buffer.push(tag_number);
+    }
 
     if length >= 5 {
         if length < 254 {
@@ -1227,21 +1236,32 @@ pub mod advanced {
             Ok((tag_number, length, consumed))
         }
 
-        /// Encode opening tag for constructed data
+        /// Encode opening tag for constructed data.
+        ///
+        /// Tag numbers above 14 use the extended form of clause 20.2.1.2: the tag
+        /// nibble is set to B'1111' and the real tag number follows in the next
+        /// octet. `BACnetNotificationParameters` needs this for
+        /// change-of-reliability (19).
         pub fn encode_opening_tag(buffer: &mut Vec<u8>, tag_number: u8) -> Result<()> {
             if tag_number > 14 {
-                return Err(EncodingError::ValueOutOfRange);
+                buffer.push(0xFE);
+                buffer.push(tag_number);
+            } else {
+                buffer.push(0x0E | (tag_number << 4));
             }
-            buffer.push(0x0E | (tag_number << 4));
             Ok(())
         }
 
-        /// Encode closing tag for constructed data
+        /// Encode closing tag for constructed data.
+        ///
+        /// Uses the same extended form as [`encode_opening_tag`] above tag 14.
         pub fn encode_closing_tag(buffer: &mut Vec<u8>, tag_number: u8) -> Result<()> {
             if tag_number > 14 {
-                return Err(EncodingError::ValueOutOfRange);
+                buffer.push(0xFF);
+                buffer.push(tag_number);
+            } else {
+                buffer.push(0x0F | (tag_number << 4));
             }
-            buffer.push(0x0F | (tag_number << 4));
             Ok(())
         }
     }

@@ -4,12 +4,18 @@
 //! object types as defined in ASHRAE 135. These objects represent multi-position values.
 
 use crate::object::{
-    event_state::EventState, reliability::Reliability, write_priority_slot, BacnetObject,
-    ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, Result,
+    event_state::EventState,
+    intrinsic::{
+        intrinsic_get, intrinsic_property_list, intrinsic_set, status_flags_for, AlarmEvaluation,
+        AlarmTrigger, IntrinsicReporting,
+    },
+    reliability::Reliability,
+    write_priority_slot, BacnetObject, ObjectError, ObjectIdentifier, ObjectType,
+    PropertyIdentifier, PropertyValue, Result,
 };
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{string::String, vec, vec::Vec};
 
 fn commandable_unsigned(value: PropertyValue) -> Result<Option<u32>> {
     match value {
@@ -20,6 +26,259 @@ fn commandable_unsigned(value: PropertyValue) -> Result<Option<u32>> {
         PropertyValue::Null => Ok(None),
         _ => Err(ObjectError::InvalidPropertyType),
     }
+}
+
+/// The fields every multi-state object shares, borrowed for a property read.
+struct MultistateView<'a> {
+    identifier: ObjectIdentifier,
+    object_type: ObjectType,
+    object_name: &'a str,
+    description: &'a str,
+    present_value: u32,
+    status_flags: u8,
+    event_state: EventState,
+    reliability: Reliability,
+    out_of_service: bool,
+    number_of_states: u32,
+    state_text: &'a [String],
+    alarm_values: &'a [u32],
+    alarm: Option<&'a IntrinsicReporting>,
+}
+
+/// Read a property common to every multi-state object type.
+///
+/// Returns `None` for properties belonging to a single type (priority array,
+/// relinquish default, device type) so callers fall through to their own arms.
+fn shared_get(
+    view: MultistateView<'_>,
+    property: PropertyIdentifier,
+) -> Option<Result<PropertyValue>> {
+    let value = match property {
+        PropertyIdentifier::ObjectIdentifier => PropertyValue::ObjectIdentifier(view.identifier),
+        PropertyIdentifier::ObjectName => {
+            PropertyValue::CharacterString(view.object_name.to_owned())
+        }
+        PropertyIdentifier::ObjectType => PropertyValue::Enumerated(u32::from(view.object_type)),
+        PropertyIdentifier::PresentValue => PropertyValue::Unsigned(view.present_value.into()),
+        PropertyIdentifier::Description => {
+            PropertyValue::CharacterString(view.description.to_owned())
+        }
+        PropertyIdentifier::StatusFlags => PropertyValue::BitString(vec![
+            view.status_flags & 0x08 != 0,
+            view.status_flags & 0x04 != 0,
+            view.status_flags & 0x02 != 0,
+            view.status_flags & 0x01 != 0,
+        ]),
+        PropertyIdentifier::EventState => {
+            PropertyValue::Enumerated(u16::from(view.event_state).into())
+        }
+        PropertyIdentifier::Reliability => PropertyValue::Enumerated(view.reliability.into()),
+        PropertyIdentifier::OutOfService => PropertyValue::Boolean(view.out_of_service),
+        PropertyIdentifier::NumberOfStates => PropertyValue::Unsigned(view.number_of_states.into()),
+        PropertyIdentifier::StateText => PropertyValue::Array(
+            view.state_text
+                .iter()
+                .cloned()
+                .map(PropertyValue::CharacterString)
+                .collect(),
+        ),
+        // Alarm_Values only exists once intrinsic reporting is configured.
+        PropertyIdentifier::AlarmValues if view.alarm.is_some() => PropertyValue::List(
+            view.alarm_values
+                .iter()
+                .map(|&state| PropertyValue::Unsigned(state.into()))
+                .collect(),
+        ),
+        _ => return view.alarm.and_then(|alarm| intrinsic_get(alarm, property)),
+    };
+
+    Some(Ok(value))
+}
+
+/// The writable fields shared by every multi-state object type.
+struct MultistateWritable<'a> {
+    object_name: &'a mut String,
+    description: &'a mut String,
+    out_of_service: &'a mut bool,
+    reliability: &'a mut Reliability,
+    alarm_values: &'a mut Vec<u32>,
+    alarm: Option<&'a mut IntrinsicReporting>,
+}
+
+/// Write a property common to every multi-state object type. `None` means the
+/// property is not one this helper owns.
+fn shared_set(
+    fields: MultistateWritable<'_>,
+    property: PropertyIdentifier,
+    value: PropertyValue,
+) -> Option<Result<()>> {
+    let MultistateWritable {
+        object_name,
+        description,
+        out_of_service,
+        reliability,
+        alarm_values,
+        alarm,
+    } = fields;
+
+    let result = match property {
+        PropertyIdentifier::ObjectName => match value {
+            PropertyValue::CharacterString(name) => {
+                *object_name = name;
+                Ok(())
+            }
+            _ => Err(ObjectError::InvalidPropertyType),
+        },
+        PropertyIdentifier::Description => match value {
+            PropertyValue::CharacterString(text) => {
+                *description = text;
+                Ok(())
+            }
+            _ => Err(ObjectError::InvalidPropertyType),
+        },
+        PropertyIdentifier::OutOfService => match value {
+            PropertyValue::Boolean(flag) => {
+                *out_of_service = flag;
+                Ok(())
+            }
+            _ => Err(ObjectError::InvalidPropertyType),
+        },
+        // Writable so a simulated device can be driven into a fault state.
+        PropertyIdentifier::Reliability => match value {
+            PropertyValue::Enumerated(raw) => {
+                *reliability = Reliability::from(raw);
+                Ok(())
+            }
+            _ => Err(ObjectError::InvalidPropertyType),
+        },
+        PropertyIdentifier::AlarmValues => match value {
+            PropertyValue::List(states) | PropertyValue::Array(states) => states
+                .into_iter()
+                .map(|state| match state {
+                    PropertyValue::Unsigned(state) => {
+                        u32::try_from(state).map_err(|_| ObjectError::InvalidPropertyType)
+                    }
+                    _ => Err(ObjectError::InvalidPropertyType),
+                })
+                .collect::<Result<Vec<u32>>>()
+                .map(|states| *alarm_values = states),
+            _ => Err(ObjectError::InvalidPropertyType),
+        },
+        _ => return alarm.and_then(|alarm| intrinsic_set(alarm, property, value)),
+    };
+
+    Some(result)
+}
+
+/// Properties every multi-state object exposes, plus the alarm properties when
+/// intrinsic reporting is configured.
+fn shared_property_list(alarm: Option<&IntrinsicReporting>) -> Vec<PropertyIdentifier> {
+    let mut properties = vec![
+        PropertyIdentifier::ObjectIdentifier,
+        PropertyIdentifier::ObjectName,
+        PropertyIdentifier::ObjectType,
+        PropertyIdentifier::PresentValue,
+        PropertyIdentifier::Description,
+        PropertyIdentifier::StatusFlags,
+        PropertyIdentifier::EventState,
+        PropertyIdentifier::Reliability,
+        PropertyIdentifier::OutOfService,
+        PropertyIdentifier::NumberOfStates,
+        PropertyIdentifier::StateText,
+    ];
+
+    if alarm.is_some() {
+        properties.push(PropertyIdentifier::AlarmValues);
+        properties.extend(intrinsic_property_list());
+    }
+
+    properties
+}
+
+/// Whether a shared property accepts writes.
+fn shared_writable(property: PropertyIdentifier, alarm_configured: bool) -> bool {
+    match property {
+        PropertyIdentifier::ObjectName
+        | PropertyIdentifier::Description
+        | PropertyIdentifier::OutOfService
+        | PropertyIdentifier::Reliability => true,
+        PropertyIdentifier::AlarmValues
+        | PropertyIdentifier::NotificationClass
+        | PropertyIdentifier::TimeDelay
+        | PropertyIdentifier::TimeDelayNormal
+        | PropertyIdentifier::EventEnable
+        | PropertyIdentifier::NotifyType
+        | PropertyIdentifier::EventDetectionEnable => alarm_configured,
+        _ => false,
+    }
+}
+
+/// Run CHANGE_OF_STATE for a multi-state object.
+///
+/// The object is off-normal while Present_Value is one of Alarm_Values. An
+/// unreliable object goes to fault instead: every intrinsic-reporting object
+/// carries Reliability, and a fault takes precedence over the primary algorithm.
+fn evaluate_multistate(
+    present_value: u32,
+    alarm_values: &[u32],
+    reliability: Reliability,
+    alarm: Option<&IntrinsicReporting>,
+) -> Option<AlarmEvaluation> {
+    let alarm = alarm?;
+    if !alarm.event_detection_enable {
+        return None;
+    }
+
+    if reliability != Reliability::NoFaultDetected {
+        return Some(AlarmEvaluation {
+            desired_state: EventState::Fault,
+            trigger: AlarmTrigger::ReliabilityChange { reliability },
+        });
+    }
+
+    let desired_state = if alarm_values.contains(&present_value) {
+        EventState::Offnormal
+    } else {
+        EventState::Normal
+    };
+
+    Some(AlarmEvaluation {
+        desired_state,
+        trigger: AlarmTrigger::MultistateChange {
+            new_state: present_value,
+        },
+    })
+}
+
+/// The intrinsic reporting trait methods shared by all multi-state object types.
+macro_rules! multistate_intrinsic_methods {
+    () => {
+        fn intrinsic(&self) -> Option<&IntrinsicReporting> {
+            self.alarm.as_ref()
+        }
+
+        fn intrinsic_mut(&mut self) -> Option<&mut IntrinsicReporting> {
+            self.alarm.as_mut()
+        }
+
+        fn evaluate_alarm(&self) -> Option<AlarmEvaluation> {
+            evaluate_multistate(
+                self.present_value,
+                &self.alarm_values,
+                self.reliability,
+                self.alarm.as_ref(),
+            )
+        }
+
+        fn apply_event_state(&mut self, state: EventState) {
+            self.event_state = state;
+            self.status_flags = status_flags_for(state, self.out_of_service);
+        }
+
+        fn is_out_of_service(&self) -> bool {
+            self.out_of_service
+        }
+    };
 }
 
 /// Multi-state Input object
@@ -47,6 +306,10 @@ pub struct MultiStateInput {
     pub number_of_states: u32,
     /// State text array
     pub state_text: Vec<String>,
+    /// States that put the object into an off-normal event state.
+    pub alarm_values: Vec<u32>,
+    /// Intrinsic reporting state; `None` when event detection is not configured.
+    pub alarm: Option<IntrinsicReporting>,
 }
 
 /// Multi-state Output object
@@ -78,6 +341,10 @@ pub struct MultiStateOutput {
     pub priority_array: [Option<u32>; 16],
     /// Relinquish default
     pub relinquish_default: u32,
+    /// States that put the object into an off-normal event state.
+    pub alarm_values: Vec<u32>,
+    /// Intrinsic reporting state; `None` when event detection is not configured.
+    pub alarm: Option<IntrinsicReporting>,
 }
 
 /// Multi-state Value object
@@ -107,6 +374,10 @@ pub struct MultiStateValue {
     pub priority_array: [Option<u32>; 16],
     /// Relinquish default
     pub relinquish_default: u32,
+    /// States that put the object into an off-normal event state.
+    pub alarm_values: Vec<u32>,
+    /// Intrinsic reporting state; `None` when event detection is not configured.
+    pub alarm: Option<IntrinsicReporting>,
 }
 
 impl MultiStateInput {
@@ -129,7 +400,20 @@ impl MultiStateInput {
             out_of_service: false,
             number_of_states,
             state_text,
+            alarm_values: Vec::new(),
+            alarm: None,
         }
+    }
+
+    /// Enable intrinsic reporting, alarming on `alarm_values` via `notification_class`.
+    pub fn with_intrinsic_reporting(
+        mut self,
+        notification_class: u32,
+        alarm_values: Vec<u32>,
+    ) -> Self {
+        self.alarm_values = alarm_values;
+        self.alarm = Some(IntrinsicReporting::new(notification_class));
+        self
     }
 
     /// Set the present value (validates range)
@@ -164,6 +448,24 @@ impl MultiStateInput {
         self.state_text[(state - 1) as usize] = text;
         Ok(())
     }
+
+    fn view(&self) -> MultistateView<'_> {
+        MultistateView {
+            identifier: self.identifier,
+            object_type: ObjectType::MultiStateInput,
+            object_name: &self.object_name,
+            description: &self.description,
+            present_value: self.present_value,
+            status_flags: self.status_flags,
+            event_state: self.event_state,
+            reliability: self.reliability,
+            out_of_service: self.out_of_service,
+            number_of_states: self.number_of_states,
+            state_text: &self.state_text,
+            alarm_values: &self.alarm_values,
+            alarm: self.alarm.as_ref(),
+        }
+    }
 }
 
 impl MultiStateOutput {
@@ -188,7 +490,20 @@ impl MultiStateOutput {
             state_text,
             priority_array: [None; 16],
             relinquish_default: 1,
+            alarm_values: Vec::new(),
+            alarm: None,
         }
+    }
+
+    /// Enable intrinsic reporting, alarming on `alarm_values` via `notification_class`.
+    pub fn with_intrinsic_reporting(
+        mut self,
+        notification_class: u32,
+        alarm_values: Vec<u32>,
+    ) -> Self {
+        self.alarm_values = alarm_values;
+        self.alarm = Some(IntrinsicReporting::new(notification_class));
+        self
     }
 
     /// Write to priority array at specified priority level (1-16)
@@ -220,6 +535,24 @@ impl MultiStateOutput {
         }
         None
     }
+
+    fn view(&self) -> MultistateView<'_> {
+        MultistateView {
+            identifier: self.identifier,
+            object_type: ObjectType::MultiStateOutput,
+            object_name: &self.object_name,
+            description: &self.description,
+            present_value: self.present_value,
+            status_flags: self.status_flags,
+            event_state: self.event_state,
+            reliability: self.reliability,
+            out_of_service: self.out_of_service,
+            number_of_states: self.number_of_states,
+            state_text: &self.state_text,
+            alarm_values: &self.alarm_values,
+            alarm: self.alarm.as_ref(),
+        }
+    }
 }
 
 impl MultiStateValue {
@@ -243,7 +576,20 @@ impl MultiStateValue {
             state_text,
             priority_array: [None; 16],
             relinquish_default: 1,
+            alarm_values: Vec::new(),
+            alarm: None,
         }
+    }
+
+    /// Enable intrinsic reporting, alarming on `alarm_values` via `notification_class`.
+    pub fn with_intrinsic_reporting(
+        mut self,
+        notification_class: u32,
+        alarm_values: Vec<u32>,
+    ) -> Self {
+        self.alarm_values = alarm_values;
+        self.alarm = Some(IntrinsicReporting::new(notification_class));
+        self
     }
 
     /// Write to priority array at specified priority level (1-16)
@@ -265,6 +611,24 @@ impl MultiStateValue {
         )?;
         Ok(())
     }
+
+    fn view(&self) -> MultistateView<'_> {
+        MultistateView {
+            identifier: self.identifier,
+            object_type: ObjectType::MultiStateValue,
+            object_name: &self.object_name,
+            description: &self.description,
+            present_value: self.present_value,
+            status_flags: self.status_flags,
+            event_state: self.event_state,
+            reliability: self.reliability,
+            out_of_service: self.out_of_service,
+            number_of_states: self.number_of_states,
+            state_text: &self.state_text,
+            alarm_values: &self.alarm_values,
+            alarm: self.alarm.as_ref(),
+        }
+    }
 }
 
 impl BacnetObject for MultiStateInput {
@@ -273,62 +637,57 @@ impl BacnetObject for MultiStateInput {
     }
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
-        match property {
-            PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
-            }
-            PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
-            }
-            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u32::from(
-                ObjectType::MultiStateInput,
-            ))),
-            PropertyIdentifier::PresentValue => {
-                Ok(PropertyValue::Unsigned(self.present_value.into()))
-            }
-            PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
-            _ => Err(ObjectError::UnknownProperty),
+        if property == PropertyIdentifier::DeviceType {
+            return Ok(PropertyValue::CharacterString(self.device_type.clone()));
         }
+
+        shared_get(self.view(), property).unwrap_or(Err(ObjectError::UnknownProperty))
     }
 
     fn set_property(&mut self, property: PropertyIdentifier, value: PropertyValue) -> Result<()> {
-        match property {
-            PropertyIdentifier::ObjectName => {
-                if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
-            }
-            PropertyIdentifier::OutOfService => {
-                if let PropertyValue::Boolean(oos) = value {
-                    self.out_of_service = oos;
-                    Ok(())
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
-            }
-            _ => Err(ObjectError::PropertyNotWritable),
-        }
+        shared_set(
+            MultistateWritable {
+                object_name: &mut self.object_name,
+                description: &mut self.description,
+                out_of_service: &mut self.out_of_service,
+                reliability: &mut self.reliability,
+                alarm_values: &mut self.alarm_values,
+                alarm: self.alarm.as_mut(),
+            },
+            property,
+            value,
+        )
+        .unwrap_or(Err(ObjectError::PropertyNotWritable))
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
-        matches!(
-            property,
-            PropertyIdentifier::ObjectName | PropertyIdentifier::OutOfService
-        )
+        shared_writable(property, self.alarm.is_some())
     }
 
     fn property_list(&self) -> Vec<PropertyIdentifier> {
-        vec![
-            PropertyIdentifier::ObjectIdentifier,
-            PropertyIdentifier::ObjectName,
-            PropertyIdentifier::ObjectType,
-            PropertyIdentifier::PresentValue,
-            PropertyIdentifier::OutOfService,
-        ]
+        let mut properties = shared_property_list(self.alarm.as_ref());
+        properties.push(PropertyIdentifier::DeviceType);
+        properties
     }
+
+    /// An input reflects a sensor, so its Present_Value has no priority array
+    /// and is simply what the source last read. States are numbered from 1.
+    fn set_sourced_value(&mut self, value: PropertyValue) -> Result<()> {
+        let PropertyValue::Unsigned(state) = value else {
+            return Err(ObjectError::InvalidPropertyType);
+        };
+        let state = u32::try_from(state).map_err(|_| ObjectError::InvalidPropertyType)?;
+        if !(1..=self.number_of_states).contains(&state) {
+            return Err(ObjectError::InvalidValue(format!(
+                "State must be 1-{}",
+                self.number_of_states
+            )));
+        }
+        self.present_value = state;
+        Ok(())
+    }
+
+    multistate_intrinsic_methods!();
 }
 
 impl BacnetObject for MultiStateOutput {
@@ -338,57 +697,43 @@ impl BacnetObject for MultiStateOutput {
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
-            PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
+            PropertyIdentifier::DeviceType => {
+                Ok(PropertyValue::CharacterString(self.device_type.clone()))
             }
-            PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
-            }
-            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u32::from(
-                ObjectType::MultiStateOutput,
-            ))),
-            PropertyIdentifier::PresentValue => {
-                Ok(PropertyValue::Unsigned(self.present_value.into()))
-            }
-            PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
-            PropertyIdentifier::PriorityArray => {
-                let array: Vec<PropertyValue> = self
-                    .priority_array
+            PropertyIdentifier::PriorityArray => Ok(PropertyValue::Array(
+                self.priority_array
                     .iter()
-                    .map(|&v| match v {
-                        Some(val) => PropertyValue::Unsigned(val.into()),
+                    .map(|&slot| match slot {
+                        Some(state) => PropertyValue::Unsigned(state.into()),
                         None => PropertyValue::Null,
                     })
-                    .collect();
-                Ok(PropertyValue::Array(array))
+                    .collect(),
+            )),
+            PropertyIdentifier::RelinquishDefault => {
+                Ok(PropertyValue::Unsigned(self.relinquish_default.into()))
             }
-            _ => Err(ObjectError::UnknownProperty),
+            _ => shared_get(self.view(), property).unwrap_or(Err(ObjectError::UnknownProperty)),
         }
     }
 
     fn set_property(&mut self, property: PropertyIdentifier, value: PropertyValue) -> Result<()> {
-        match property {
-            PropertyIdentifier::ObjectName => {
-                if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
-            }
-            PropertyIdentifier::PresentValue => {
-                self.set_property_with_priority(property, value, None)
-            }
-            PropertyIdentifier::OutOfService => {
-                if let PropertyValue::Boolean(oos) = value {
-                    self.out_of_service = oos;
-                    Ok(())
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
-            }
-            _ => Err(ObjectError::PropertyNotWritable),
+        if property == PropertyIdentifier::PresentValue {
+            return self.set_property_with_priority(property, value, None);
         }
+
+        shared_set(
+            MultistateWritable {
+                object_name: &mut self.object_name,
+                description: &mut self.description,
+                out_of_service: &mut self.out_of_service,
+                reliability: &mut self.reliability,
+                alarm_values: &mut self.alarm_values,
+                alarm: self.alarm.as_mut(),
+            },
+            property,
+            value,
+        )
+        .unwrap_or(Err(ObjectError::PropertyNotWritable))
     }
 
     fn set_property_with_priority(
@@ -405,24 +750,21 @@ impl BacnetObject for MultiStateOutput {
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
-        matches!(
-            property,
-            PropertyIdentifier::ObjectName
-                | PropertyIdentifier::PresentValue
-                | PropertyIdentifier::OutOfService
-        )
+        property == PropertyIdentifier::PresentValue
+            || shared_writable(property, self.alarm.is_some())
     }
 
     fn property_list(&self) -> Vec<PropertyIdentifier> {
-        vec![
-            PropertyIdentifier::ObjectIdentifier,
-            PropertyIdentifier::ObjectName,
-            PropertyIdentifier::ObjectType,
-            PropertyIdentifier::PresentValue,
-            PropertyIdentifier::OutOfService,
+        let mut properties = shared_property_list(self.alarm.as_ref());
+        properties.extend([
+            PropertyIdentifier::DeviceType,
             PropertyIdentifier::PriorityArray,
-        ]
+            PropertyIdentifier::RelinquishDefault,
+        ]);
+        properties
     }
+
+    multistate_intrinsic_methods!();
 }
 
 impl BacnetObject for MultiStateValue {
@@ -432,57 +774,40 @@ impl BacnetObject for MultiStateValue {
 
     fn get_property(&self, property: PropertyIdentifier) -> Result<PropertyValue> {
         match property {
-            PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
-            }
-            PropertyIdentifier::ObjectName => {
-                Ok(PropertyValue::CharacterString(self.object_name.clone()))
-            }
-            PropertyIdentifier::ObjectType => Ok(PropertyValue::Enumerated(u32::from(
-                ObjectType::MultiStateValue,
-            ))),
-            PropertyIdentifier::PresentValue => {
-                Ok(PropertyValue::Unsigned(self.present_value.into()))
-            }
-            PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(self.out_of_service)),
-            PropertyIdentifier::PriorityArray => {
-                let array: Vec<PropertyValue> = self
-                    .priority_array
+            PropertyIdentifier::PriorityArray => Ok(PropertyValue::Array(
+                self.priority_array
                     .iter()
-                    .map(|&v| match v {
-                        Some(val) => PropertyValue::Unsigned(val.into()),
+                    .map(|&slot| match slot {
+                        Some(state) => PropertyValue::Unsigned(state.into()),
                         None => PropertyValue::Null,
                     })
-                    .collect();
-                Ok(PropertyValue::Array(array))
+                    .collect(),
+            )),
+            PropertyIdentifier::RelinquishDefault => {
+                Ok(PropertyValue::Unsigned(self.relinquish_default.into()))
             }
-            _ => Err(ObjectError::UnknownProperty),
+            _ => shared_get(self.view(), property).unwrap_or(Err(ObjectError::UnknownProperty)),
         }
     }
 
     fn set_property(&mut self, property: PropertyIdentifier, value: PropertyValue) -> Result<()> {
-        match property {
-            PropertyIdentifier::ObjectName => {
-                if let PropertyValue::CharacterString(name) = value {
-                    self.object_name = name;
-                    Ok(())
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
-            }
-            PropertyIdentifier::PresentValue => {
-                self.set_property_with_priority(property, value, None)
-            }
-            PropertyIdentifier::OutOfService => {
-                if let PropertyValue::Boolean(oos) = value {
-                    self.out_of_service = oos;
-                    Ok(())
-                } else {
-                    Err(ObjectError::InvalidPropertyType)
-                }
-            }
-            _ => Err(ObjectError::PropertyNotWritable),
+        if property == PropertyIdentifier::PresentValue {
+            return self.set_property_with_priority(property, value, None);
         }
+
+        shared_set(
+            MultistateWritable {
+                object_name: &mut self.object_name,
+                description: &mut self.description,
+                out_of_service: &mut self.out_of_service,
+                reliability: &mut self.reliability,
+                alarm_values: &mut self.alarm_values,
+                alarm: self.alarm.as_mut(),
+            },
+            property,
+            value,
+        )
+        .unwrap_or(Err(ObjectError::PropertyNotWritable))
     }
 
     fn set_property_with_priority(
@@ -499,24 +824,20 @@ impl BacnetObject for MultiStateValue {
     }
 
     fn is_property_writable(&self, property: PropertyIdentifier) -> bool {
-        matches!(
-            property,
-            PropertyIdentifier::ObjectName
-                | PropertyIdentifier::PresentValue
-                | PropertyIdentifier::OutOfService
-        )
+        property == PropertyIdentifier::PresentValue
+            || shared_writable(property, self.alarm.is_some())
     }
 
     fn property_list(&self) -> Vec<PropertyIdentifier> {
-        vec![
-            PropertyIdentifier::ObjectIdentifier,
-            PropertyIdentifier::ObjectName,
-            PropertyIdentifier::ObjectType,
-            PropertyIdentifier::PresentValue,
-            PropertyIdentifier::OutOfService,
+        let mut properties = shared_property_list(self.alarm.as_ref());
+        properties.extend([
             PropertyIdentifier::PriorityArray,
-        ]
+            PropertyIdentifier::RelinquishDefault,
+        ]);
+        properties
     }
+
+    multistate_intrinsic_methods!();
 }
 
 #[cfg(test)]
@@ -628,5 +949,24 @@ mod tests {
         msv.set_property(PropertyIdentifier::PresentValue, PropertyValue::Unsigned(3))
             .unwrap();
         assert_eq!(msv.present_value, 3);
+    }
+
+    #[test]
+    fn a_source_drives_an_input_and_its_state_is_range_checked() {
+        let mut input = MultiStateInput::new(1, "Mode".to_string(), 4);
+
+        input.set_sourced_value(PropertyValue::Unsigned(3)).unwrap();
+        assert_eq!(input.present_value, 3);
+
+        for out_of_range in [0, 5] {
+            assert!(
+                matches!(
+                    input.set_sourced_value(PropertyValue::Unsigned(out_of_range)),
+                    Err(ObjectError::InvalidValue(_))
+                ),
+                "state {out_of_range} is outside 1-4"
+            );
+        }
+        assert_eq!(input.present_value, 3, "a rejected state changes nothing");
     }
 }

@@ -32,7 +32,7 @@ desktop applications.
 | **File / Device Objects**  | Working         | Basic property support                                                           |
 | **Client API**             | Working         | Discovery, broadcast Who-Is, read/write & verified write (BACnet/IP, no routing) |
 | **Segmentation**           | Not implemented | Large message segmentation/reassembly                                            |
-| **Alarm & Event**          | Not implemented | Intrinsic and algorithmic reporting                                              |
+| **Alarm & Event**          | Partial         | Intrinsic reporting (change-of-state, out-of-range, change-of-reliability); no acknowledgment or algorithmic reporting |
 | **Trending**               | Not implemented | Trend log objects                                                                |
 | **Scheduling**             | Not implemented | Schedule and calendar objects                                                    |
 | **BACnet/SC (Annex AB)**   | Not implemented | Secure Connect                                                                   |

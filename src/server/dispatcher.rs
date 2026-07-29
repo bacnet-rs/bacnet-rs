@@ -40,6 +40,7 @@ impl ServerDispatcher {
         &self,
         request_npdu: &Npdu,
         request_apdu: Apdu,
+        source: Option<std::net::SocketAddr>,
     ) -> Result<Option<ServerResponse>, ServerError> {
         if request_npdu.is_network_message() {
             return Ok(None);
@@ -85,7 +86,8 @@ impl ServerDispatcher {
                 service_data,
                 ..
             } => {
-                let response = self.dispatch_confirmed(invoke_id, service_choice, &service_data)?;
+                let response =
+                    self.dispatch_confirmed(invoke_id, service_choice, &service_data, source)?;
                 enforce_max_apdu(
                     invoke_id,
                     response,
@@ -113,6 +115,7 @@ impl ServerDispatcher {
         invoke_id: u8,
         service_choice: ConfirmedServiceChoice,
         service_data: &[u8],
+        source: Option<std::net::SocketAddr>,
     ) -> Result<Apdu, ServerError> {
         if !self.objects.supports_confirmed_service(service_choice) {
             return Ok(reject(invoke_id, RejectReason::UnrecognizedService));
@@ -144,7 +147,7 @@ impl ServerDispatcher {
             }
             ConfirmedServiceChoice::WriteProperty => {
                 match WritePropertyRequest::decode(service_data) {
-                    Ok(request) => match self.objects.write_property(&request) {
+                    Ok(request) => match self.objects.write_property(&request, source) {
                         Ok(()) => Ok(Apdu::SimpleAck {
                             invoke_id,
                             service_choice: service_choice as u8,
@@ -300,6 +303,7 @@ mod tests {
                     MaxApduSize::Up1476,
                     false,
                 ),
+                None,
             )
             .unwrap()
             .unwrap();
@@ -339,6 +343,7 @@ mod tests {
                     MaxApduSize::Up1476,
                     false,
                 ),
+                None,
             )
             .unwrap()
             .unwrap();
@@ -379,6 +384,7 @@ mod tests {
                     MaxApduSize::Up1476,
                     false,
                 ),
+                None,
             )
             .unwrap()
             .unwrap();
@@ -422,6 +428,7 @@ mod tests {
                     MaxApduSize::Up1476,
                     false,
                 ),
+                None,
             )
             .unwrap()
             .unwrap();
@@ -459,6 +466,7 @@ mod tests {
                         MaxApduSize::Up50,
                         segmentation_accepted,
                     ),
+                    None,
                 )
                 .unwrap()
                 .unwrap();

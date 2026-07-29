@@ -274,6 +274,49 @@ pub trait BacnetObject: Send + Sync {
 
     /// Get list of all properties
     fn property_list(&self) -> Vec<PropertyIdentifier>;
+
+    /// The object's intrinsic reporting state, when event detection is configured.
+    ///
+    /// Objects that do not participate in alarming keep the default `None`.
+    fn intrinsic(&self) -> Option<&intrinsic::IntrinsicReporting> {
+        None
+    }
+
+    /// Mutable access to the intrinsic reporting state, for transition bookkeeping.
+    fn intrinsic_mut(&mut self) -> Option<&mut intrinsic::IntrinsicReporting> {
+        None
+    }
+
+    /// Run this object's event algorithm against its current value.
+    ///
+    /// Returns `None` when the object has no event detection configured.
+    fn evaluate_alarm(&self) -> Option<intrinsic::AlarmEvaluation> {
+        None
+    }
+
+    /// Commit a confirmed transition, updating Event_State and Status_Flags.
+    fn apply_event_state(&mut self, _state: EventState) {}
+
+    /// Set the value this object reflects from whatever drives it.
+    ///
+    /// This is the hosting application's path, not the network's, and it
+    /// deliberately bypasses [`is_property_writable`](Self::is_property_writable).
+    /// An Analog Input's Present_Value is read-only to clients precisely because
+    /// it belongs to the sensor behind it — but something has to be able to say
+    /// what the sensor reads, and for a hosted device that is the application.
+    /// bacnet-stack draws the same line with its `*_Present_Value_Set` entry
+    /// points.
+    ///
+    /// Objects with nothing behind them keep the default and report the write as
+    /// unsupported.
+    fn set_sourced_value(&mut self, _value: PropertyValue) -> Result<()> {
+        Err(ObjectError::OptionalFunctionalityNotSupported)
+    }
+
+    /// Whether the object is decoupled from its physical point.
+    fn is_out_of_service(&self) -> bool {
+        false
+    }
 }
 
 /// Update one slot in a BACnet command priority array and return the resulting
@@ -808,8 +851,12 @@ pub mod device;
 pub mod engineering_units;
 /// File object type
 pub mod file;
+/// Intrinsic reporting (alarm and event) state shared by alarm-capable objects
+pub mod intrinsic;
 /// Multi-state object types (MSI, MSO, MSV)
 pub mod multistate;
+/// Notification Class object type
+pub mod notification_class;
 
 pub mod event_state;
 pub mod object_type;
@@ -824,7 +871,11 @@ pub use device::{DeviceObject, ObjectFunctions};
 pub use engineering_units::EngineeringUnits;
 pub use event_state::EventState;
 pub use file::{File, FileAccessMethod};
+pub use intrinsic::{
+    EventTransition, EventTransitionBits, IntrinsicReporting, NotifyType, UNSPECIFIED_TIMESTAMP,
+};
 pub use multistate::{MultiStateInput, MultiStateOutput, MultiStateValue};
+pub use notification_class::NotificationClass;
 pub use reliability::Reliability;
 
 #[cfg(feature = "std")]

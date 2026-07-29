@@ -42,6 +42,7 @@ pastey = "0.2.1"
 
 [dev-dependencies]
 criterion = "0.5"
+serde_json = "1.0"
 proptest = "1.5"
 tokio-test = "0.4"
 ctrlc = "3.4"
@@ -70,6 +71,11 @@ required-features = ["std"]
 [[example]]
 name = "hosted_device"
 path = "examples/basic/hosted_device.rs"
+required-features = ["std"]
+
+[[example]]
+name = "alarm_device"
+path = "examples/basic/alarm_device.rs"
 required-features = ["std"]
 
 # Networking examples

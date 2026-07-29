@@ -210,6 +210,36 @@ impl ObjectDatabase {
         object.get_property(property)
     }
 
+    /// Run `f` against a stored object, returning `None` when it is absent.
+    ///
+    /// Lets callers reach object behaviour that is not expressed as a property —
+    /// the intrinsic reporting hooks, for instance — without exposing the lock.
+    pub fn with_object<T>(
+        &self,
+        identifier: ObjectIdentifier,
+        f: impl FnOnce(&dyn BacnetObject) -> T,
+    ) -> Option<T> {
+        let objects = self.objects.read().unwrap();
+        let entry = objects.get(&identifier)?;
+        let object = entry.read().unwrap();
+        Some(f(object.as_ref()))
+    }
+
+    /// Mutable counterpart to [`Self::with_object`].
+    ///
+    /// Does not bump the database revision: callers mutate runtime state such as
+    /// Event_State rather than the object's configuration.
+    pub fn with_object_mut<T>(
+        &self,
+        identifier: ObjectIdentifier,
+        f: impl FnOnce(&mut dyn BacnetObject) -> T,
+    ) -> Option<T> {
+        let objects = self.objects.read().unwrap();
+        let entry = objects.get(&identifier)?;
+        let mut object = entry.write().unwrap();
+        Some(f(object.as_mut()))
+    }
+
     /// Return the properties exposed by an object.
     pub fn property_list(&self, identifier: ObjectIdentifier) -> Result<Vec<PropertyIdentifier>> {
         let objects = self.objects.read().unwrap();

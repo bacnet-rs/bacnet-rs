@@ -4,11 +4,14 @@ use std::{
 };
 
 use crate::{
-    app::Apdu,
+    app::{Apdu, MaxApduSize, MaxSegments},
     datalink::bip::{BvlcFunction, BvlcHeader},
     network::Npdu,
     object::database::ObjectDatabase,
-    service::{AbortReason, ConfirmedServiceChoice, RejectReason},
+    service::{
+        event_notification::EventNotification, AbortReason, ConfirmedServiceChoice, RejectReason,
+        UnconfirmedServiceChoice,
+    },
 };
 
 use super::{ObjectService, ServerDispatcher, ServerError, ServerResponse};
@@ -64,6 +67,14 @@ impl BacnetIpServer {
         &self.dispatcher
     }
 
+    /// A handle for originating event notifications from this device.
+    pub fn notifier(&self) -> Result<Notifier, ServerError> {
+        Ok(Notifier {
+            socket: self.socket.try_clone()?,
+            invoke_id: std::sync::atomic::AtomicU8::new(1),
+        })
+    }
+
     /// Receive and process one UDP datagram.
     ///
     /// Returns `true` when the datagram produced a BACnet response and `false`
@@ -71,7 +82,11 @@ impl BacnetIpServer {
     pub fn serve_once(&mut self) -> Result<bool, ServerError> {
         let (length, source) = self.socket.recv_from(&mut self.receive_buffer)?;
 
-        let Some(response) = process_datagram(&self.dispatcher, &self.receive_buffer[..length])?
+        let Some(response) = process_datagram(
+            &self.dispatcher,
+            &self.receive_buffer[..length],
+            Some(source),
+        )?
         else {
             return Ok(false);
         };
@@ -207,9 +222,10 @@ async fn serve_async_request(
     source: SocketAddr,
     buffer: Vec<u8>,
 ) -> Result<(), ServerError> {
-    let response = tokio::task::spawn_blocking(move || process_datagram(&dispatcher, &buffer))
-        .await
-        .map_err(|error| ServerError::AsyncTask(error.to_string()))??;
+    let response =
+        tokio::task::spawn_blocking(move || process_datagram(&dispatcher, &buffer, Some(source)))
+            .await
+            .map_err(|error| ServerError::AsyncTask(error.to_string()))??;
     if let Some(response) = response {
         socket
             .send_to(&response.frame, response.destination.unwrap_or(source))
@@ -236,6 +252,7 @@ fn log_request_completion(
 fn process_datagram(
     dispatcher: &ServerDispatcher,
     data: &[u8],
+    source: Option<SocketAddr>,
 ) -> Result<Option<DatagramResponse>, ServerError> {
     let Some((request_npdu, apdu_data, destination)) = decode_bacnet_ip_frame(data) else {
         return Ok(None);
@@ -244,7 +261,7 @@ fn process_datagram(
         return Ok(None);
     }
     let response = match Apdu::decode(apdu_data) {
-        Ok(request_apdu) => dispatcher.dispatch(&request_npdu, request_apdu)?,
+        Ok(request_apdu) => dispatcher.dispatch(&request_npdu, request_apdu, source)?,
         Err(_) => response_for_undecodable_apdu(&request_npdu, apdu_data),
     };
     let Some(response) = response else {
@@ -315,6 +332,81 @@ fn decode_bacnet_ip_frame(data: &[u8]) -> Option<(Npdu, &[u8], Option<SocketAddr
 
     let (npdu, npdu_length) = Npdu::decode(&data[npdu_start..]).ok()?;
     Some((npdu, &data[npdu_start + npdu_length..], destination))
+}
+
+/// Sends device-originated messages that are not replies to a request.
+///
+/// The server loop is strictly request/response, but a device performing
+/// intrinsic reporting has to originate event notifications. A `Notifier` holds
+/// its own handle on the server's socket so it can transmit while the loop is
+/// blocked in `recv_from`.
+pub struct Notifier {
+    socket: UdpSocket,
+    invoke_id: std::sync::atomic::AtomicU8,
+}
+
+impl Notifier {
+    /// Send an event notification to `destination`.
+    ///
+    /// `confirmed` follows the recipient's `issue_confirmed_notifications` flag: a
+    /// recipient that asked for confirmed delivery may ignore unconfirmed traffic
+    /// entirely, so the choice has to come from its Recipient_List entry rather
+    /// than from a device-wide default.
+    ///
+    /// The SimpleAck a confirmed notification earns is not awaited. The server
+    /// loop owns the receive side of this socket, so consuming the reply here
+    /// would race it; unacknowledged notifications are not retried yet.
+    pub fn send_event_notification(
+        &self,
+        destination: SocketAddr,
+        notification: &EventNotification,
+        confirmed: bool,
+    ) -> Result<(), ServerError> {
+        let mut service_data = Vec::new();
+        notification
+            .encode(&mut service_data)
+            .map_err(ServerError::from)?;
+
+        let apdu = if confirmed {
+            Apdu::ConfirmedRequest {
+                segmented: false,
+                more_follows: false,
+                segmented_response_accepted: false,
+                max_segments: MaxSegments::Unspecified,
+                max_response_size: MaxApduSize::Up1476,
+                invoke_id: self.next_invoke_id(),
+                sequence_number: None,
+                proposed_window_size: None,
+                service_choice: ConfirmedServiceChoice::ConfirmedEventNotification,
+                service_data,
+            }
+        } else {
+            Apdu::UnconfirmedRequest {
+                service_choice: UnconfirmedServiceChoice::UnconfirmedEventNotification,
+                service_data,
+            }
+        };
+
+        let npdu = if confirmed {
+            // A confirmed request asks the recipient to reply.
+            let mut npdu = Npdu::new();
+            npdu.control.expecting_reply = true;
+            npdu.encode()
+        } else {
+            Npdu::new().encode()
+        };
+
+        let frame = wrap_bvlc_parts(BvlcFunction::OriginalUnicastNpdu, &[&npdu, &apdu.encode()]);
+        self.socket.send_to(&frame, destination)?;
+        Ok(())
+    }
+
+    /// Invoke ids cycle 0-255; confirmed notifications are not tracked, so this
+    /// only needs to avoid reusing an id for two requests in flight at once.
+    fn next_invoke_id(&self) -> u8 {
+        self.invoke_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 #[cfg(test)]
@@ -478,7 +570,7 @@ mod tests {
         payload.extend_from_slice(&request.encode());
         let frame = wrap_bvlc(BvlcFunction::OriginalUnicastNpdu, &payload);
 
-        let response = process_datagram(server.dispatcher(), &frame)
+        let response = process_datagram(server.dispatcher(), &frame, None)
             .unwrap()
             .unwrap();
         let (_, apdu_data, _) = decode_bacnet_ip_frame(&response.frame).unwrap();
@@ -502,12 +594,14 @@ mod tests {
         let server = BacnetIpServer::from_socket(socket, database);
 
         let network_message = wrap_bvlc(BvlcFunction::OriginalBroadcastNpdu, &[0x01, 0x80, 0x00]);
-        assert!(process_datagram(server.dispatcher(), &network_message)
-            .unwrap()
-            .is_none());
+        assert!(
+            process_datagram(server.dispatcher(), &network_message, None)
+                .unwrap()
+                .is_none()
+        );
 
         let malformed_apdu = wrap_bvlc(BvlcFunction::OriginalUnicastNpdu, &[0x01, 0x00, 0x00]);
-        assert!(process_datagram(server.dispatcher(), &malformed_apdu)
+        assert!(process_datagram(server.dispatcher(), &malformed_apdu, None)
             .unwrap()
             .is_none());
 
@@ -515,9 +609,11 @@ mod tests {
             BvlcFunction::OriginalBroadcastNpdu,
             &[0x01, 0x00, 0x10, 0x08, 0x09, 0x01, 0xFF],
         );
-        assert!(process_datagram(server.dispatcher(), &malformed_who_is)
-            .unwrap()
-            .is_none());
+        assert!(
+            process_datagram(server.dispatcher(), &malformed_who_is, None)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -533,7 +629,7 @@ mod tests {
             &[0x01, 0x00, 0x00, 0x05, 42, 18],
         );
 
-        let response = process_datagram(server.dispatcher(), &frame)
+        let response = process_datagram(server.dispatcher(), &frame, None)
             .unwrap()
             .unwrap();
         let (_, apdu_data, _) = decode_bacnet_ip_frame(&response.frame).unwrap();
@@ -560,7 +656,7 @@ mod tests {
         forwarded_payload.extend_from_slice(&[0x01, 0x00, 0x10, 0x08]);
         let frame = wrap_bvlc(BvlcFunction::ForwardedNpdu, &forwarded_payload);
 
-        let response = process_datagram(server.dispatcher(), &frame)
+        let response = process_datagram(server.dispatcher(), &frame, None)
             .unwrap()
             .unwrap();
         assert_eq!(response.destination, Some(origin));

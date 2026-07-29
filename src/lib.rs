@@ -109,6 +109,9 @@ pub mod encoding;
 pub mod network;
 
 /// BACnet object definitions, properties, and type system
+/// Intrinsic reporting engine
+#[cfg(feature = "std")]
+pub mod event;
 pub mod object;
 
 /// BACnet service definitions for confirmed and unconfirmed operations

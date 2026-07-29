@@ -160,6 +160,9 @@
 //! and provides a consistent programming interface regardless of the underlying
 //! communication technology.
 
+/// ConfirmedEventNotification and UnconfirmedEventNotification services
+pub mod event_notification;
+
 #[cfg(feature = "std")]
 use std::error::Error;
 

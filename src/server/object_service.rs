@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use crate::{
     object::{
@@ -16,11 +16,46 @@ use crate::{
 #[derive(Clone)]
 pub struct ObjectService {
     database: Arc<ObjectDatabase>,
+    addresses: super::AddressCache,
+}
+
+/// Decode the value carried by a WriteProperty request.
+///
+/// Application tags alone cannot describe BACnet's constructed datatypes: a
+/// `BACnetDestination` is a context-tagged sequence, and `Recipient_List` is a
+/// list of them. The property identifier is what tells a device how to read
+/// those, so they need decoding before the generic tag-driven path, which would
+/// otherwise reject them as an invalid data type.
+fn decode_written_value(
+    property: PropertyIdentifier,
+    encoded: &[u8],
+) -> Result<PropertyValue, ObjectError> {
+    if property == PropertyIdentifier::RecipientList {
+        // An empty payload clears the list, which is how a recipient deregisters.
+        return crate::property::complex::decode_destinations(encoded)
+            .map(PropertyValue::List)
+            .map_err(|_| ObjectError::InvalidPropertyType);
+    }
+
+    let (value, consumed) = crate::property::decode_property_value(encoded)
+        .map_err(|_| ObjectError::InvalidPropertyType)?;
+    if consumed != encoded.len() {
+        return Err(ObjectError::InvalidPropertyType);
+    }
+    Ok(value)
 }
 
 impl ObjectService {
     pub fn new(database: Arc<ObjectDatabase>) -> Self {
-        Self { database }
+        Self {
+            database,
+            addresses: super::AddressCache::new(),
+        }
+    }
+
+    /// Device-to-address bindings this service has learned from requests.
+    pub fn addresses(&self) -> &super::AddressCache {
+        &self.addresses
     }
 
     pub fn database(&self) -> &Arc<ObjectDatabase> {
@@ -204,7 +239,11 @@ impl ObjectService {
         Ok(expanded)
     }
 
-    pub fn write_property(&self, request: &WritePropertyRequest) -> Result<(), ObjectError> {
+    pub fn write_property(
+        &self,
+        request: &WritePropertyRequest,
+        source: Option<SocketAddr>,
+    ) -> Result<(), ObjectError> {
         if let Some(index) = request.property_array_index {
             match self.database.get_property(
                 request.object_identifier,
@@ -218,15 +257,26 @@ impl ObjectService {
             }
         }
 
-        let (value, consumed) = crate::property::decode_property_value(&request.property_value)
-            .map_err(|_| ObjectError::InvalidPropertyType)?;
-        if consumed != request.property_value.len() {
-            return Err(ObjectError::InvalidPropertyType);
+        let property: PropertyIdentifier = request.property_identifier.into();
+        let value = decode_written_value(property, &request.property_value)?;
+
+        // A recipient registering itself tells us where it is: bind the devices it
+        // names to the address the request came from.
+        if property == PropertyIdentifier::RecipientList {
+            if let (Some(source), PropertyValue::List(entries)) = (source, &value) {
+                for entry in entries {
+                    if let PropertyValue::Destination(destination) = entry {
+                        if let crate::property::Recipient::Device(device) = destination.recipient {
+                            self.addresses.learn(device, source);
+                        }
+                    }
+                }
+            }
         }
 
         self.database.set_property_with_priority(
             request.object_identifier,
-            request.property_identifier.into(),
+            property,
             value,
             request.priority,
         )
@@ -478,23 +528,115 @@ mod tests {
         request.property_array_index = Some(1);
 
         assert!(matches!(
-            service.write_property(&request),
+            service.write_property(&request, None),
             Err(ObjectError::PropertyIsNotArray)
         ));
 
         request.property_identifier = PropertyIdentifier::PriorityArray.into();
         assert!(matches!(
-            service.write_property(&request),
+            service.write_property(&request, None),
             Err(ObjectError::OptionalFunctionalityNotSupported)
         ));
         request.property_array_index = Some(17);
         assert!(matches!(
-            service.write_property(&request),
+            service.write_property(&request, None),
             Err(ObjectError::InvalidArrayIndex)
         ));
         assert_eq!(
             object_error_codes(&ObjectError::OptionalFunctionalityNotSupported),
             (2, 45)
+        );
+    }
+}
+
+#[cfg(test)]
+mod recipient_list_tests {
+    use super::*;
+    use crate::object::{Device, NotificationClass, ObjectType};
+    use crate::property::{DestinationValue, Recipient};
+
+    /// EEP registers the dingo gateway by writing Recipient_List, so a device has
+    /// to accept a constructed BACnetDestination list. Decoding it generically
+    /// fails, which the gateway surfaced as error-class property,
+    /// error-code invalid-data-type.
+    #[test]
+    fn a_written_recipient_list_decodes_into_destinations() {
+        let gateway = ObjectIdentifier::new(ObjectType::Device, 5785);
+        let destination = DestinationValue {
+            valid_days: vec![true; 7],
+            from_time: (0, 0, 0, 0),
+            to_time: (23, 59, 59, 99),
+            recipient: Recipient::Device(gateway),
+            process_identifier: 777,
+            issue_confirmed_notifications: false,
+            transitions: vec![true, true, true],
+        };
+
+        let mut encoded = Vec::new();
+        destination.encode(&mut encoded).expect("encode");
+
+        let value = decode_written_value(PropertyIdentifier::RecipientList, &encoded)
+            .expect("recipient list should decode");
+
+        match value {
+            PropertyValue::List(entries) => {
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0], PropertyValue::Destination(destination));
+            }
+            other => panic!("unexpected value: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_empty_recipient_list_clears_the_registration() {
+        let value = decode_written_value(PropertyIdentifier::RecipientList, &[])
+            .expect("empty list should decode");
+        assert_eq!(value, PropertyValue::List(Vec::new()));
+    }
+
+    /// End to end through the service, the way a WriteProperty request arrives.
+    #[test]
+    fn writing_recipient_list_through_the_service_registers_a_recipient() {
+        let database = Arc::new(ObjectDatabase::new(Device::new(
+            1234,
+            "Alarm device".to_string(),
+        )));
+        database
+            .add_object(Box::new(NotificationClass::new(1, "NC".to_string())))
+            .expect("add notification class");
+        let service = ObjectService::new(Arc::clone(&database));
+
+        let gateway = ObjectIdentifier::new(ObjectType::Device, 5785);
+        let destination = DestinationValue {
+            valid_days: vec![true; 7],
+            from_time: (0, 0, 0, 0),
+            to_time: (23, 59, 59, 99),
+            recipient: Recipient::Device(gateway),
+            process_identifier: 777,
+            issue_confirmed_notifications: false,
+            transitions: vec![true, true, true],
+        };
+        let mut encoded = Vec::new();
+        destination.encode(&mut encoded).expect("encode");
+
+        let request = WritePropertyRequest::new(
+            ObjectIdentifier::new(ObjectType::NotificationClass, 1),
+            PropertyIdentifier::RecipientList.into(),
+            encoded,
+        );
+        service
+            .write_property(&request, Some("192.168.6.1:47808".parse().unwrap()))
+            .expect("write accepted");
+
+        let stored = database
+            .get_property(
+                ObjectIdentifier::new(ObjectType::NotificationClass, 1),
+                PropertyIdentifier::RecipientList,
+            )
+            .expect("read back");
+        assert_eq!(
+            stored,
+            PropertyValue::List(vec![PropertyValue::Destination(destination)])
         );
     }
 }
