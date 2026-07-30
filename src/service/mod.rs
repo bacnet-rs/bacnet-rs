@@ -161,6 +161,8 @@
 //! communication technology.
 
 /// ConfirmedEventNotification and UnconfirmedEventNotification services
+pub mod cov_notification;
+/// ConfirmedEventNotification and UnconfirmedEventNotification services
 pub mod event_notification;
 
 #[cfg(feature = "std")]
@@ -226,6 +228,7 @@ impl Error for ServiceError {}
 pub enum ConfirmedServiceChoice {
     // Alarm and Event Services
     AcknowledgeAlarm = 0,
+    ConfirmedCovNotification = 1,
     ConfirmedEventNotification = 2,
     GetAlarmSummary = 3,
     GetEnrollmentSummary = 4,
@@ -273,6 +276,7 @@ impl TryFrom<u8> for ConfirmedServiceChoice {
     fn try_from(value: u8) -> Result<Self> {
         match value {
             0 => Ok(Self::AcknowledgeAlarm),
+            1 => Ok(Self::ConfirmedCovNotification),
             2 => Ok(Self::ConfirmedEventNotification),
             3 => Ok(Self::GetAlarmSummary),
             4 => Ok(Self::GetEnrollmentSummary),
@@ -386,11 +390,12 @@ generate_custom_enum!(
 }, u8, 64..=255);
 
 use crate::encoding::{
+    advanced::context::{encode_closing_tag, encode_opening_tag},
     decode_context_enumerated, decode_context_object_id, decode_context_tag,
     decode_context_unsigned, decode_enumerated, decode_object_identifier, decode_tag,
-    decode_unsigned, encode_context_enumerated, encode_context_object_id, encode_context_unsigned,
-    encode_enumerated, encode_object_identifier, encode_unsigned, BACnetTag,
-    Result as EncodingResult,
+    decode_unsigned, encode_context_enumerated, encode_context_object_id, encode_context_tag,
+    encode_context_unsigned, encode_enumerated, encode_object_identifier, encode_unsigned,
+    BACnetTag, Result as EncodingResult,
 };
 use crate::object::{
     ObjectError, ObjectIdentifier, PropertyIdentifier, PropertyValue, Segmentation,
@@ -1525,29 +1530,70 @@ impl SubscribeCovRequest {
     }
 
     /// Encode the Subscribe COV request
+    /// Encode the SubscribeCOV service data.
+    ///
+    /// Both optional fields absent is the BACnet idiom for cancelling a
+    /// subscription rather than creating one, so they are only written when set.
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
-        // Subscriber process identifier - context tag 0
-        buffer.push(0x09); // Context tag 0, length 1
-        buffer.push(self.subscriber_process_identifier as u8);
+        buffer.extend_from_slice(&encode_context_unsigned(
+            self.subscriber_process_identifier,
+            0,
+        )?);
+        buffer.extend_from_slice(&encode_context_object_id(
+            self.monitored_object_identifier,
+            1,
+        )?);
 
-        // Monitored object identifier - context tag 1
-        let object_id: u32 = self.monitored_object_identifier.try_into()?;
-        buffer.push(0x1C); // Context tag 1, length 4
-        buffer.extend_from_slice(&object_id.to_be_bytes());
-
-        // Issue confirmed notifications - context tag 2 (optional)
         if let Some(confirmed) = self.issue_confirmed_notifications {
-            buffer.push(0x22); // Context tag 2, length 2
-            buffer.push(if confirmed { 1 } else { 0 });
+            // A context-tagged BOOLEAN carries its value in a one-byte payload,
+            // unlike the application form where the length field holds it.
+            buffer.push(0x29);
+            buffer.push(u8::from(confirmed));
         }
 
-        // Lifetime - context tag 3 (optional)
         if let Some(lifetime) = self.lifetime {
-            buffer.push(0x39); // Context tag 3, length 1
-            buffer.push(lifetime as u8);
+            buffer.extend_from_slice(&encode_context_unsigned(lifetime, 3)?);
         }
 
         Ok(())
+    }
+
+    /// Decode the SubscribeCOV service data.
+    ///
+    /// A request with neither `issue_confirmed_notifications` nor `lifetime` is a
+    /// cancellation; [`Self::is_cancellation`] reports that.
+    pub fn decode(data: &[u8]) -> EncodingResult<Self> {
+        let (subscriber_process_identifier, mut offset) = decode_context_unsigned(data, 0)?;
+        let (monitored_object_identifier, consumed) = decode_context_object_id(&data[offset..], 1)?;
+        offset += consumed;
+
+        let mut issue_confirmed_notifications = None;
+        if data.get(offset).map(|byte| byte >> 4) == Some(2) {
+            let length = (data[offset] & 0x07) as usize;
+            if length != 1 || data.len() <= offset + 1 {
+                return Err(EncodingError::InvalidTag);
+            }
+            issue_confirmed_notifications = Some(data[offset + 1] != 0);
+            offset += 2;
+        }
+
+        let mut lifetime = None;
+        if data.get(offset).map(|byte| byte >> 4) == Some(3) {
+            let (value, _) = decode_context_unsigned(&data[offset..], 3)?;
+            lifetime = Some(value);
+        }
+
+        Ok(Self {
+            subscriber_process_identifier,
+            monitored_object_identifier,
+            issue_confirmed_notifications,
+            lifetime,
+        })
+    }
+
+    /// Whether this request cancels an existing subscription.
+    pub fn is_cancellation(&self) -> bool {
+        self.issue_confirmed_notifications.is_none() && self.lifetime.is_none()
     }
 }
 
@@ -1589,6 +1635,112 @@ impl SubscribeCovPropertyRequest {
     pub fn with_cov_increment(mut self, increment: f32) -> Self {
         self.cov_increment = Some(increment);
         self
+    }
+
+    /// Encode the SubscribeCOVProperty service data.
+    ///
+    /// Laid out as SubscribeCOV with two additions: the monitored property is a
+    /// constructed `BACnetPropertyReference` under context tag 4, and an optional
+    /// increment follows it as a context-tagged REAL. The property is mandatory
+    /// even when cancelling, because it is part of what identifies the
+    /// subscription being cancelled.
+    pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
+        buffer.extend_from_slice(&encode_context_unsigned(
+            self.subscriber_process_identifier,
+            0,
+        )?);
+        buffer.extend_from_slice(&encode_context_object_id(
+            self.monitored_object_identifier,
+            1,
+        )?);
+
+        if let Some(confirmed) = self.issue_confirmed_notifications {
+            buffer.push(0x29);
+            buffer.push(u8::from(confirmed));
+        }
+
+        if let Some(lifetime) = self.lifetime {
+            buffer.extend_from_slice(&encode_context_unsigned(lifetime, 3)?);
+        }
+
+        encode_opening_tag(buffer, 4)?;
+        self.monitored_property.encode(buffer)?;
+        encode_closing_tag(buffer, 4)?;
+
+        if let Some(increment) = self.cov_increment {
+            encode_context_tag(buffer, 5, 4)?;
+            buffer.extend_from_slice(&increment.to_be_bytes());
+        }
+
+        Ok(())
+    }
+
+    /// Decode the SubscribeCOVProperty service data.
+    pub fn decode(data: &[u8]) -> EncodingResult<Self> {
+        let (subscriber_process_identifier, mut offset) = decode_context_unsigned(data, 0)?;
+        let (monitored_object_identifier, consumed) = decode_context_object_id(&data[offset..], 1)?;
+        offset += consumed;
+
+        let mut issue_confirmed_notifications = None;
+        if data.get(offset).map(|byte| byte >> 4) == Some(2) {
+            let length = (data[offset] & 0x07) as usize;
+            if length != 1 || data.len() <= offset + 1 {
+                return Err(EncodingError::InvalidTag);
+            }
+            issue_confirmed_notifications = Some(data[offset + 1] != 0);
+            offset += 2;
+        }
+
+        let mut lifetime = None;
+        if data.get(offset).map(|byte| byte >> 4) == Some(3) {
+            let (value, consumed) = decode_context_unsigned(&data[offset..], 3)?;
+            lifetime = Some(value);
+            offset += consumed;
+        }
+
+        let (tag, kind, tag_length) = decode_context_tag(&data[offset..])?;
+        if tag != 4 || kind != 6 {
+            return Err(EncodingError::InvalidTag);
+        }
+        offset += tag_length;
+
+        let (monitored_property, consumed) = PropertyReference::decode(&data[offset..])?;
+        offset += consumed;
+
+        let (tag, kind, _) = decode_context_tag(&data[offset..])?;
+        if tag != 4 || kind != 7 {
+            return Err(EncodingError::InvalidTag);
+        }
+        offset += 1;
+
+        let mut cov_increment = None;
+        if offset < data.len() {
+            let (tag, length, tag_length) = decode_context_tag(&data[offset..])?;
+            if tag != 5 {
+                return Err(EncodingError::InvalidTag);
+            }
+            if length != 4 || data.len() < offset + tag_length + 4 {
+                return Err(EncodingError::InvalidLength);
+            }
+            let bytes = &data[offset + tag_length..offset + tag_length + 4];
+            cov_increment = Some(f32::from_be_bytes(
+                bytes.try_into().map_err(|_| EncodingError::InvalidLength)?,
+            ));
+        }
+
+        Ok(Self {
+            subscriber_process_identifier,
+            monitored_object_identifier,
+            issue_confirmed_notifications,
+            lifetime,
+            monitored_property,
+            cov_increment,
+        })
+    }
+
+    /// Whether this request cancels an existing subscription.
+    pub fn is_cancellation(&self) -> bool {
+        self.issue_confirmed_notifications.is_none() && self.lifetime.is_none()
     }
 }
 
@@ -2608,6 +2760,90 @@ mod tests {
         let mut buffer = Vec::new();
         cov_req.encode(&mut buffer).unwrap();
         assert!(!buffer.is_empty());
+    }
+
+    fn subscribe_cov_property_request() -> SubscribeCovPropertyRequest {
+        let mut request = SubscribeCovPropertyRequest::new(
+            777,
+            ObjectIdentifier::new(ObjectType::MultiStateValue, 1),
+            PropertyReference::new(PropertyIdentifier::PresentValue),
+        );
+        request.issue_confirmed_notifications = Some(false);
+        request.lifetime = Some(600);
+        request
+    }
+
+    /// The property reference is constructed, so it needs the opening and closing
+    /// tag 4 around it. A subscriber that sends the bare reference — or a device
+    /// that expects one — is off by two octets and decodes garbage.
+    #[test]
+    fn subscribe_cov_property_wraps_the_reference_in_context_tag_4() {
+        let request = subscribe_cov_property_request().with_cov_increment(0.5);
+        let mut encoded = Vec::new();
+        request.encode(&mut encoded).unwrap();
+
+        assert_eq!(
+            &encoded[encoded.len() - 9..],
+            &[0x4E, 0x09, 0x55, 0x4F, 0x5C, 0x3F, 0x00, 0x00, 0x00],
+            "opening tag 4, present-value, closing tag 4, then the REAL increment"
+        );
+    }
+
+    #[test]
+    fn subscribe_cov_property_survives_a_round_trip() {
+        let request = subscribe_cov_property_request().with_cov_increment(0.5);
+        let mut encoded = Vec::new();
+        request.encode(&mut encoded).unwrap();
+
+        let decoded = SubscribeCovPropertyRequest::decode(&encoded).unwrap();
+        assert_eq!(decoded.subscriber_process_identifier, 777);
+        assert_eq!(
+            decoded.monitored_object_identifier,
+            ObjectIdentifier::new(ObjectType::MultiStateValue, 1)
+        );
+        assert_eq!(decoded.issue_confirmed_notifications, Some(false));
+        assert_eq!(decoded.lifetime, Some(600));
+        assert_eq!(
+            decoded.monitored_property.property_identifier,
+            PropertyIdentifier::PresentValue
+        );
+        assert_eq!(decoded.monitored_property.property_array_index, None);
+        assert_eq!(decoded.cov_increment, Some(0.5));
+        assert!(!decoded.is_cancellation());
+    }
+
+    /// Neither optional field present is the cancellation form, and the property
+    /// still has to survive it: it is part of what identifies the subscription
+    /// being cancelled.
+    #[test]
+    fn subscribe_cov_property_decodes_the_cancellation_form() {
+        let request = SubscribeCovPropertyRequest::new(
+            777,
+            ObjectIdentifier::new(ObjectType::MultiStateValue, 1),
+            PropertyReference::new(PropertyIdentifier::PresentValue),
+        );
+        let mut encoded = Vec::new();
+        request.encode(&mut encoded).unwrap();
+
+        let decoded = SubscribeCovPropertyRequest::decode(&encoded).unwrap();
+        assert!(decoded.is_cancellation());
+        assert_eq!(
+            decoded.monitored_property.property_identifier,
+            PropertyIdentifier::PresentValue
+        );
+        assert_eq!(decoded.cov_increment, None);
+    }
+
+    #[test]
+    fn subscribe_cov_property_carries_an_array_index() {
+        let mut request = subscribe_cov_property_request();
+        request.monitored_property =
+            PropertyReference::with_array_index(PropertyIdentifier::PriorityArray, 3);
+        let mut encoded = Vec::new();
+        request.encode(&mut encoded).unwrap();
+
+        let decoded = SubscribeCovPropertyRequest::decode(&encoded).unwrap();
+        assert_eq!(decoded.monitored_property.property_array_index, Some(3));
     }
 
     #[test]

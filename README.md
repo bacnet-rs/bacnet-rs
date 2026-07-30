@@ -24,6 +24,8 @@ desktop applications.
 | **Read Property Multiple** | Working         | Batch property reads                                                             |
 | **Write Property**         | Working         | Single property write                                                            |
 | **Subscribe COV**          | Working         | Change-of-value subscriptions                                                    |
+| **Subscribe COV Property** | Working         | One named property, with an optional subscriber increment; no array elements     |
+| **Active_COV_Subscriptions** | Working       | The Device object reports who is watching what, and for how much longer          |
 | **Atomic File Read/Write** | Working         | Stream and record access                                                         |
 | **Time Synchronization**   | Working         | Standard and UTC                                                                 |
 | **Analog Objects**         | Working         | Input, Output, Value with priority arrays                                        |

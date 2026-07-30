@@ -7,7 +7,7 @@ use crate::object::{
     engineering_units::EngineeringUnits,
     event_state::EventState,
     intrinsic::{
-        intrinsic_get, intrinsic_property_list, intrinsic_set, status_flags_for, AlarmEvaluation,
+        intrinsic_get, intrinsic_property_list, intrinsic_set, status_flags_bits, AlarmEvaluation,
         AlarmTrigger, IntrinsicReporting,
     },
     reliability::Reliability,
@@ -265,7 +265,6 @@ macro_rules! analog_intrinsic_methods {
 
         fn apply_event_state(&mut self, state: EventState) {
             self.event_state = state;
-            self.status_flags = status_flags_for(state, self.out_of_service);
         }
 
         fn is_out_of_service(&self) -> bool {
@@ -287,8 +286,9 @@ pub struct AnalogInput {
     pub description: String,
     /// Device type
     pub device_type: String,
-    /// Status flags (4 bits: in_alarm, fault, overridden, out_of_service)
-    pub status_flags: u8,
+    /// Whether an operator has overridden the point. The other Status_Flags
+    /// bits are derived from Event_State, Reliability and Out_Of_Service.
+    pub overridden: bool,
     /// Event state
     pub event_state: EventState,
     /// Reliability
@@ -328,8 +328,9 @@ pub struct AnalogOutput {
     pub description: String,
     /// Device type
     pub device_type: String,
-    /// Status flags
-    pub status_flags: u8,
+    /// Whether an operator has overridden the point. The other Status_Flags
+    /// bits are derived from Event_State, Reliability and Out_Of_Service.
+    pub overridden: bool,
     /// Event state
     pub event_state: EventState,
     /// Reliability
@@ -371,8 +372,9 @@ pub struct AnalogValue {
     pub present_value: f32,
     /// Description
     pub description: String,
-    /// Status flags
-    pub status_flags: u8,
+    /// Whether an operator has overridden the point. The other Status_Flags
+    /// bits are derived from Event_State, Reliability and Out_Of_Service.
+    pub overridden: bool,
     /// Event state
     pub event_state: EventState,
     /// Reliability
@@ -408,7 +410,7 @@ impl AnalogInput {
             present_value: 0.0,
             description: String::new(),
             device_type: String::new(),
-            status_flags: 0,
+            overridden: false,
             event_state: EventState::Normal,
             reliability: Reliability::NoFaultDetected,
             out_of_service: false,
@@ -450,37 +452,19 @@ impl AnalogInput {
         self.present_value = value;
     }
 
-    /// Get status flags as individual booleans
+    /// Status flags as individual booleans, in the in-alarm / fault /
+    /// overridden / out-of-service order.
+    ///
+    /// Derived from Event_State, Reliability, Out_Of_Service and
+    /// [`overridden`](Self::overridden); set those to change what this reports.
     pub fn get_status_flags(&self) -> (bool, bool, bool, bool) {
-        (
-            (self.status_flags & 0x08) != 0, // in_alarm
-            (self.status_flags & 0x04) != 0, // fault
-            (self.status_flags & 0x02) != 0, // overridden
-            (self.status_flags & 0x01) != 0, // out_of_service
-        )
-    }
-
-    /// Set status flags from individual booleans
-    pub fn set_status_flags(
-        &mut self,
-        in_alarm: bool,
-        fault: bool,
-        overridden: bool,
-        out_of_service: bool,
-    ) {
-        self.status_flags = 0;
-        if in_alarm {
-            self.status_flags |= 0x08;
-        }
-        if fault {
-            self.status_flags |= 0x04;
-        }
-        if overridden {
-            self.status_flags |= 0x02;
-        }
-        if out_of_service {
-            self.status_flags |= 0x01;
-        }
+        let bits = status_flags_bits(
+            self.event_state,
+            self.reliability,
+            self.out_of_service,
+            self.overridden,
+        );
+        (bits[0], bits[1], bits[2], bits[3])
     }
 }
 
@@ -493,7 +477,7 @@ impl AnalogOutput {
             present_value: 0.0,
             description: String::new(),
             device_type: String::new(),
-            status_flags: 0,
+            overridden: false,
             event_state: EventState::Normal,
             reliability: Reliability::NoFaultDetected,
             out_of_service: false,
@@ -562,7 +546,7 @@ impl AnalogValue {
             object_name,
             present_value: 0.0,
             description: String::new(),
-            status_flags: 0,
+            overridden: false,
             event_state: EventState::Normal,
             reliability: Reliability::NoFaultDetected,
             out_of_service: false,
@@ -633,12 +617,12 @@ impl BacnetObject for AnalogInput {
             PropertyIdentifier::DeviceType => {
                 Ok(PropertyValue::CharacterString(self.device_type.clone()))
             }
-            PropertyIdentifier::StatusFlags => Ok(PropertyValue::BitString(vec![
-                self.status_flags & 0x08 != 0,
-                self.status_flags & 0x04 != 0,
-                self.status_flags & 0x02 != 0,
-                self.status_flags & 0x01 != 0,
-            ])),
+            PropertyIdentifier::StatusFlags => Ok(PropertyValue::BitString(status_flags_bits(
+                self.event_state,
+                self.reliability,
+                self.out_of_service,
+                self.overridden,
+            ))),
             PropertyIdentifier::EventState => Ok(PropertyValue::Enumerated(
                 u16::from(self.event_state).into(),
             )),
@@ -775,12 +759,12 @@ impl BacnetObject for AnalogOutput {
             PropertyIdentifier::DeviceType => {
                 Ok(PropertyValue::CharacterString(self.device_type.clone()))
             }
-            PropertyIdentifier::StatusFlags => Ok(PropertyValue::BitString(vec![
-                self.status_flags & 0x08 != 0,
-                self.status_flags & 0x04 != 0,
-                self.status_flags & 0x02 != 0,
-                self.status_flags & 0x01 != 0,
-            ])),
+            PropertyIdentifier::StatusFlags => Ok(PropertyValue::BitString(status_flags_bits(
+                self.event_state,
+                self.reliability,
+                self.out_of_service,
+                self.overridden,
+            ))),
             PropertyIdentifier::EventState => Ok(PropertyValue::Enumerated(
                 u16::from(self.event_state).into(),
             )),
@@ -935,12 +919,12 @@ impl BacnetObject for AnalogValue {
             PropertyIdentifier::Description => {
                 Ok(PropertyValue::CharacterString(self.description.clone()))
             }
-            PropertyIdentifier::StatusFlags => Ok(PropertyValue::BitString(vec![
-                self.status_flags & 0x08 != 0,
-                self.status_flags & 0x04 != 0,
-                self.status_flags & 0x02 != 0,
-                self.status_flags & 0x01 != 0,
-            ])),
+            PropertyIdentifier::StatusFlags => Ok(PropertyValue::BitString(status_flags_bits(
+                self.event_state,
+                self.reliability,
+                self.out_of_service,
+                self.overridden,
+            ))),
             PropertyIdentifier::EventState => Ok(PropertyValue::Enumerated(
                 u16::from(self.event_state).into(),
             )),
@@ -1167,14 +1151,55 @@ mod tests {
     #[test]
     fn test_status_flags() {
         let mut ai = AnalogInput::new(1, "Test".to_string());
+        assert_eq!(ai.get_status_flags(), (false, false, false, false));
 
-        ai.set_status_flags(true, false, true, false);
-        let (in_alarm, fault, overridden, out_of_service) = ai.get_status_flags();
-        assert!(in_alarm);
-        assert!(!fault);
-        assert!(overridden);
-        assert!(!out_of_service);
-        assert_eq!(ai.status_flags, 0x0A); // 1010 in binary
+        ai.event_state = EventState::Offnormal;
+        ai.overridden = true;
+        assert_eq!(ai.get_status_flags(), (true, false, true, false));
+    }
+
+    /// Status_Flags is derived, so a client that writes Out_Of_Service or
+    /// Reliability sees it move. It used to be a cached byte that only the event
+    /// engine refreshed, so both writes left it reading all-false.
+    #[test]
+    fn status_flags_follow_out_of_service_and_reliability() {
+        let mut value = AnalogValue::new(1, "Temp".to_string());
+
+        value
+            .set_property(
+                PropertyIdentifier::OutOfService,
+                PropertyValue::Boolean(true),
+            )
+            .unwrap();
+        assert_eq!(
+            value.get_property(PropertyIdentifier::StatusFlags).unwrap(),
+            PropertyValue::BitString(vec![false, false, false, true]),
+            "out-of-service"
+        );
+
+        value
+            .set_property(
+                PropertyIdentifier::Reliability,
+                PropertyValue::Enumerated(u32::from(Reliability::ProcessError)),
+            )
+            .unwrap();
+        assert_eq!(
+            value.get_property(PropertyIdentifier::StatusFlags).unwrap(),
+            PropertyValue::BitString(vec![false, true, false, true]),
+            "fault follows Reliability even while Event_State is normal"
+        );
+
+        value
+            .set_property(
+                PropertyIdentifier::Reliability,
+                PropertyValue::Enumerated(u32::from(Reliability::NoFaultDetected)),
+            )
+            .unwrap();
+        assert_eq!(
+            value.get_property(PropertyIdentifier::StatusFlags).unwrap(),
+            PropertyValue::BitString(vec![false, false, false, true]),
+            "and clears again"
+        );
     }
 
     /// The point of the hook: a host can drive an input whose Present_Value no

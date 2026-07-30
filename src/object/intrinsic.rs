@@ -10,7 +10,7 @@
 //! is not configured and the object behaves exactly as it did before.
 
 use crate::object::{
-    event_state::EventState, ObjectError, PropertyIdentifier, PropertyValue, Result,
+    event_state::EventState, ObjectError, PropertyIdentifier, PropertyValue, Reliability, Result,
 };
 use crate::property::TimestampValue;
 
@@ -196,20 +196,31 @@ pub struct AlarmEvaluation {
     pub trigger: AlarmTrigger,
 }
 
-/// Pack the `Status_Flags` byte an intrinsic-reporting object reports for
-/// `state`, in the in-alarm / fault / overridden / out-of-service bit order.
-pub fn status_flags_for(state: EventState, out_of_service: bool) -> u8 {
-    let mut flags = 0u8;
-    if state != EventState::Normal {
-        flags |= 0x08; // in-alarm
-    }
-    if state == EventState::Fault {
-        flags |= 0x04; // fault
-    }
-    if out_of_service {
-        flags |= 0x01;
-    }
-    flags
+/// The four `Status_Flags` bits, in the BACnet in-alarm / fault / overridden /
+/// out-of-service order.
+///
+/// Derived on read rather than stored. Every input is a property an object
+/// already carries, and a byte cached alongside them goes stale the moment a
+/// client writes one — which is exactly what happened: `Out_Of_Service` and
+/// `Reliability` were writable while the cached byte was only recomputed on an
+/// event transition, so `Status_Flags` contradicted both.
+///
+/// `overridden` is the one bit with no other source, so an object has to carry
+/// it.
+pub fn status_flags_bits(
+    event_state: EventState,
+    reliability: Reliability,
+    out_of_service: bool,
+    overridden: bool,
+) -> Vec<bool> {
+    vec![
+        event_state != EventState::Normal,
+        // Fault follows Reliability, not just Event_State: an object with event
+        // detection disabled stays in the normal state but is still faulted.
+        reliability != Reliability::NoFaultDetected || event_state == EventState::Fault,
+        overridden,
+        out_of_service,
+    ]
 }
 
 /// Intrinsic reporting configuration and transition bookkeeping.

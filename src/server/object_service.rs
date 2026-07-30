@@ -5,10 +5,14 @@ use crate::{
         database::ObjectDatabase, ObjectError, ObjectIdentifier, ObjectType, PropertyIdentifier,
         PropertyValue, Segmentation,
     },
+    property::{
+        BacnetAddress, CovSubscriptionValue, ObjectPropertyReference, Recipient, RecipientProcess,
+    },
     service::{
         ConfirmedServiceChoice, IAmRequest, PropertyReference, PropertyResult, ReadAccessResult,
         ReadPropertyMultipleRequest, ReadPropertyMultipleResponse, ReadPropertyRequest,
-        ReadPropertyResponse, WritePropertyRequest,
+        ReadPropertyResponse, SubscribeCovPropertyRequest, SubscribeCovRequest,
+        WritePropertyRequest,
     },
 };
 
@@ -17,6 +21,7 @@ use crate::{
 pub struct ObjectService {
     database: Arc<ObjectDatabase>,
     addresses: super::AddressCache,
+    subscriptions: crate::cov::CovSubscriptions,
 }
 
 /// Decode the value carried by a WriteProperty request.
@@ -50,7 +55,116 @@ impl ObjectService {
         Self {
             database,
             addresses: super::AddressCache::new(),
+            subscriptions: crate::cov::CovSubscriptions::new(),
         }
+    }
+
+    /// The device's COV subscription table.
+    pub fn subscriptions(&self) -> &crate::cov::CovSubscriptions {
+        &self.subscriptions
+    }
+
+    /// Register, renew or cancel a COV subscription.
+    ///
+    /// A request carrying neither a confirmation preference nor a lifetime is a
+    /// cancellation. Cancelling something that was never subscribed still
+    /// succeeds: the subscriber's intent - not being subscribed - is satisfied.
+    pub fn subscribe_cov(
+        &self,
+        request: &SubscribeCovRequest,
+        source: Option<SocketAddr>,
+    ) -> Result<(), ObjectError> {
+        let Some(address) = source else {
+            // Without a source there is nowhere to send notifications.
+            return Err(ObjectError::InvalidConfiguration(
+                "COV subscription has no source address".to_string(),
+            ));
+        };
+
+        // Refuse to watch an object that is not here, so a subscriber finds out
+        // now rather than never hearing anything.
+        if self
+            .database
+            .get_property(
+                request.monitored_object_identifier,
+                PropertyIdentifier::PresentValue,
+            )
+            .is_err()
+        {
+            return Err(ObjectError::NotFound);
+        }
+
+        let key = crate::cov::SubscriptionKey {
+            process_identifier: request.subscriber_process_identifier,
+            monitored_object: request.monitored_object_identifier,
+            monitored_property: None,
+            address,
+        };
+
+        if request.is_cancellation() {
+            self.subscriptions.cancel(&key);
+            return Ok(());
+        }
+
+        self.subscriptions.subscribe(crate::cov::Subscription {
+            key,
+            confirmed: request.issue_confirmed_notifications.unwrap_or(false),
+            expires_at: self.subscriptions.expiry_for(request.lifetime),
+            cov_increment: None,
+        });
+        Ok(())
+    }
+
+    /// Register, renew or cancel a subscription to one named property.
+    ///
+    /// Differs from [`Self::subscribe_cov`] in what it watches rather than in how
+    /// it is maintained: the named property is part of the subscription's
+    /// identity, so a subscriber may hold several against one object, and a
+    /// cancellation removes only the property it names.
+    pub fn subscribe_cov_property(
+        &self,
+        request: &SubscribeCovPropertyRequest,
+        source: Option<SocketAddr>,
+    ) -> Result<(), ObjectError> {
+        let Some(address) = source else {
+            return Err(ObjectError::InvalidConfiguration(
+                "COV subscription has no source address".to_string(),
+            ));
+        };
+
+        // Watching one element of an array would mean tracking the element
+        // rather than the property, which the engine does not do. Saying so is
+        // better than subscribing to the whole property and reporting changes
+        // the subscriber did not ask about.
+        if request.monitored_property.property_array_index.is_some() {
+            return Err(ObjectError::OptionalFunctionalityNotSupported);
+        }
+
+        let property = request.monitored_property.property_identifier;
+        // Reading it now is what distinguishes an unknown object from an unknown
+        // property, so the subscriber is told which of the two it got wrong.
+        self.database
+            .get_property(request.monitored_object_identifier, property)?;
+
+        let key = crate::cov::SubscriptionKey {
+            process_identifier: request.subscriber_process_identifier,
+            monitored_object: request.monitored_object_identifier,
+            monitored_property: Some(property),
+            address,
+        };
+
+        if request.is_cancellation() {
+            self.subscriptions.cancel(&key);
+            return Ok(());
+        }
+
+        self.subscriptions.subscribe(crate::cov::Subscription {
+            key,
+            confirmed: request.issue_confirmed_notifications.unwrap_or(false),
+            expires_at: self.subscriptions.expiry_for(request.lifetime),
+            cov_increment: request.cov_increment,
+        });
+        Ok(())
     }
 
     /// Device-to-address bindings this service has learned from requests.
@@ -63,19 +177,16 @@ impl ObjectService {
     }
 
     pub fn supports_confirmed_service(&self, service: ConfirmedServiceChoice) -> bool {
-        match service {
-            ConfirmedServiceChoice::ReadProperty
-            | ConfirmedServiceChoice::ReadPropertyMultiple
-            | ConfirmedServiceChoice::WriteProperty => {}
-            _ => return false,
-        }
+        let Some(bit) = services_supported_bit(service) else {
+            return false;
+        };
         let device = self.database.get_device_id();
 
         matches!(
             self.database
                 .get_property(device, PropertyIdentifier::ProtocolServicesSupported),
             Ok(PropertyValue::BitString(bits))
-                if bits.get(service as usize).copied().unwrap_or(false)
+                if bits.get(bit).copied().unwrap_or(false)
         )
     }
 
@@ -174,6 +285,9 @@ impl ObjectService {
                     .map(PropertyValue::ObjectIdentifier)
                     .collect(),
             ),
+            PropertyIdentifier::ActiveCovSubscriptions if is_device => {
+                PropertyValue::List(self.active_cov_subscriptions())
+            }
             PropertyIdentifier::PropertyList => {
                 let mut properties = self.properties_for(object_identifier)?;
                 properties.retain(|property| {
@@ -200,6 +314,66 @@ impl ObjectService {
         select_array_value(value, property_array_index)
     }
 
+    /// The Device object's Active_COV_Subscriptions, built from the live table.
+    ///
+    /// The property belongs to the Device object, but the subscriptions belong to
+    /// the service that maintains them, and `Device::get_property` has no way to
+    /// reach them — so it is answered from the same seam Object_List already uses.
+    ///
+    /// A subscriber whose address is not a BACnet/IP one is left out rather than
+    /// described with an address that would not reach it. Annex J is four octets
+    /// and a port; an IPv6 peer has no MAC this field can carry.
+    fn active_cov_subscriptions(&self) -> Vec<PropertyValue> {
+        let now = self.subscriptions.now();
+        let mut live = self.subscriptions.all();
+
+        // The table is a HashMap, which hands them back in whatever order it
+        // likes. A client reading the list twice should not see it shuffle.
+        live.sort_by_key(|subscription| {
+            (
+                subscription.key.process_identifier,
+                u32::from(subscription.key.monitored_object.object_type),
+                subscription.key.monitored_object.instance,
+                subscription
+                    .key
+                    .monitored_property
+                    .map_or(0, |property| u32::from(property) + 1),
+            )
+        });
+
+        live.into_iter()
+            .filter_map(|subscription| {
+                let mac = super::address_cache::mac_from_socket_address(subscription.key.address)?;
+                Some(PropertyValue::CovSubscription(CovSubscriptionValue {
+                    recipient: RecipientProcess {
+                        recipient: Recipient::Address(BacnetAddress {
+                            // Zero is the local network, which is where a
+                            // subscriber that reached this socket directly is.
+                            network: 0,
+                            mac_address: mac,
+                        }),
+                        process_identifier: subscription.key.process_identifier,
+                    },
+                    monitored_property: ObjectPropertyReference {
+                        object_identifier: subscription.key.monitored_object,
+                        // A plain SubscribeCOV names no property — it asks for
+                        // the standard set — but this field is not optional, and
+                        // Present_Value is the member of that set a subscriber
+                        // actually subscribed for.
+                        property_identifier: subscription
+                            .key
+                            .monitored_property
+                            .unwrap_or(PropertyIdentifier::PresentValue),
+                        array_index: None,
+                    },
+                    issue_confirmed_notifications: subscription.confirmed,
+                    time_remaining: subscription.time_remaining(now),
+                    cov_increment: subscription.cov_increment,
+                }))
+            })
+            .collect()
+    }
+
     fn properties_for(
         &self,
         object_identifier: ObjectIdentifier,
@@ -209,6 +383,11 @@ impl ObjectService {
             && !properties.contains(&PropertyIdentifier::ObjectList)
         {
             properties.push(PropertyIdentifier::ObjectList);
+        }
+        if object_identifier == self.database.get_device_id()
+            && !properties.contains(&PropertyIdentifier::ActiveCovSubscriptions)
+        {
+            properties.push(PropertyIdentifier::ActiveCovSubscriptions);
         }
         if !properties.contains(&PropertyIdentifier::PropertyList) {
             properties.push(PropertyIdentifier::PropertyList);
@@ -317,6 +496,29 @@ impl ObjectService {
                 .try_into()
                 .map_err(|_| ObjectError::InvalidPropertyType)?,
         ))
+    }
+}
+
+/// Where a confirmed service sits in Protocol_Services_Supported, for the
+/// services this server executes.
+///
+/// BACnetServicesSupported and BACnetConfirmedServiceChoice are different
+/// enumerations that happen to agree up to requestKey (25) and diverge after it:
+/// subscribeCOVProperty is service choice 28 but bit 38, while bit 28 is
+/// unconfirmedCOVNotification. Indexing the bit string by service choice would
+/// therefore consult an unrelated bit — reading `false` for a service that is
+/// supported, or `true` for one that is not.
+///
+/// `None` means this server does not execute the service, whatever the device
+/// object advertises.
+fn services_supported_bit(service: ConfirmedServiceChoice) -> Option<usize> {
+    match service {
+        ConfirmedServiceChoice::SubscribeCOV => Some(5),
+        ConfirmedServiceChoice::ReadProperty => Some(12),
+        ConfirmedServiceChoice::ReadPropertyMultiple => Some(14),
+        ConfirmedServiceChoice::WriteProperty => Some(15),
+        ConfirmedServiceChoice::SubscribeCOVProperty => Some(38),
+        _ => None,
     }
 }
 
@@ -638,5 +840,450 @@ mod recipient_list_tests {
             stored,
             PropertyValue::List(vec![PropertyValue::Destination(destination)])
         );
+    }
+}
+
+#[cfg(test)]
+mod cov_subscription_tests {
+    use super::*;
+    use crate::object::{AnalogValue, Device};
+
+    fn service() -> ObjectService {
+        let database = Arc::new(ObjectDatabase::new(Device::new(1234, "Test".to_string())));
+        database
+            .add_object(Box::new(AnalogValue::new(1, "Zone".to_string())))
+            .unwrap();
+        ObjectService::new(database)
+    }
+
+    fn subscriber() -> SocketAddr {
+        "192.168.6.1:47808".parse().unwrap()
+    }
+
+    fn request(lifetime: Option<u32>, confirmed: Option<bool>) -> SubscribeCovRequest {
+        SubscribeCovRequest {
+            subscriber_process_identifier: 777,
+            monitored_object_identifier: ObjectIdentifier::new(ObjectType::AnalogValue, 1),
+            issue_confirmed_notifications: confirmed,
+            lifetime,
+        }
+    }
+
+    #[test]
+    fn subscribing_records_the_subscriber_and_its_preferences() {
+        let service = service();
+        service
+            .subscribe_cov(&request(Some(3600), Some(true)), Some(subscriber()))
+            .expect("subscribe");
+
+        let held = service.subscriptions().all();
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].key.process_identifier, 777);
+        assert_eq!(held[0].key.address, subscriber());
+        assert!(held[0].confirmed);
+        assert_eq!(
+            held[0].expires_at,
+            Some(3600),
+            "lifetime against a zero clock"
+        );
+    }
+
+    /// Both optional fields absent is BACnet's way of cancelling.
+    #[test]
+    fn a_request_without_lifetime_or_confirmation_cancels() {
+        let service = service();
+        service
+            .subscribe_cov(&request(Some(3600), Some(false)), Some(subscriber()))
+            .expect("subscribe");
+        assert_eq!(service.subscriptions().len(), 1);
+
+        service
+            .subscribe_cov(&request(None, None), Some(subscriber()))
+            .expect("cancel");
+        assert!(service.subscriptions().is_empty());
+    }
+
+    #[test]
+    fn cancelling_something_never_subscribed_still_succeeds() {
+        let service = service();
+        assert!(service
+            .subscribe_cov(&request(None, None), Some(subscriber()))
+            .is_ok());
+    }
+
+    #[test]
+    fn a_zero_lifetime_means_until_cancelled() {
+        let service = service();
+        service
+            .subscribe_cov(&request(Some(0), Some(false)), Some(subscriber()))
+            .expect("subscribe");
+        assert_eq!(service.subscriptions().all()[0].expires_at, None);
+    }
+
+    #[test]
+    fn subscribing_to_a_missing_object_is_refused() {
+        let service = service();
+        let mut missing = request(Some(60), Some(false));
+        missing.monitored_object_identifier = ObjectIdentifier::new(ObjectType::AnalogValue, 99);
+
+        assert!(matches!(
+            service.subscribe_cov(&missing, Some(subscriber())),
+            Err(ObjectError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn a_subscription_without_a_source_address_is_refused() {
+        let service = service();
+        assert!(service
+            .subscribe_cov(&request(Some(60), Some(false)), None)
+            .is_err());
+    }
+
+    #[test]
+    fn the_service_advertises_subscribe_cov() {
+        assert!(service().supports_confirmed_service(ConfirmedServiceChoice::SubscribeCOV));
+    }
+
+    /// Service choice 28 has to be looked up as BACnetServicesSupported bit 38.
+    /// Indexed by service choice it lands on unconfirmedCOVNotification, which a
+    /// hosted device leaves clear — so the subscribe would be rejected as
+    /// unrecognized however loudly the device advertised the service.
+    #[test]
+    fn the_service_advertises_subscribe_cov_property() {
+        assert!(service().supports_confirmed_service(ConfirmedServiceChoice::SubscribeCOVProperty));
+    }
+
+    /// The converse mistake: ReadRange is service choice 26, which is I-Am's bit
+    /// in the services-supported string and always set on a hosted device.
+    #[test]
+    fn a_service_this_server_does_not_execute_is_not_advertised() {
+        assert!(!service().supports_confirmed_service(ConfirmedServiceChoice::ReadRange));
+    }
+
+    fn property_request(
+        property: PropertyIdentifier,
+        lifetime: Option<u32>,
+        confirmed: Option<bool>,
+    ) -> SubscribeCovPropertyRequest {
+        SubscribeCovPropertyRequest {
+            subscriber_process_identifier: 777,
+            monitored_object_identifier: ObjectIdentifier::new(ObjectType::AnalogValue, 1),
+            issue_confirmed_notifications: confirmed,
+            lifetime,
+            monitored_property: crate::service::PropertyReference::new(property),
+            cov_increment: None,
+        }
+    }
+
+    #[test]
+    fn subscribing_to_a_property_records_what_it_watches() {
+        let service = service();
+        let mut request =
+            property_request(PropertyIdentifier::PresentValue, Some(3600), Some(true));
+        request.cov_increment = Some(2.5);
+        service
+            .subscribe_cov_property(&request, Some(subscriber()))
+            .expect("subscribe");
+
+        let held = service.subscriptions().all();
+        assert_eq!(held.len(), 1);
+        assert_eq!(
+            held[0].key.monitored_property,
+            Some(PropertyIdentifier::PresentValue)
+        );
+        assert_eq!(held[0].cov_increment, Some(2.5));
+        assert!(held[0].confirmed);
+    }
+
+    /// A property subscription and a plain one on the same object are different
+    /// subscriptions: they watch different things and are cancelled separately.
+    #[test]
+    fn a_property_subscription_does_not_replace_the_plain_one() {
+        let service = service();
+        service
+            .subscribe_cov(&request(Some(3600), Some(false)), Some(subscriber()))
+            .expect("subscribe");
+        service
+            .subscribe_cov_property(
+                &property_request(PropertyIdentifier::PresentValue, Some(3600), Some(false)),
+                Some(subscriber()),
+            )
+            .expect("subscribe");
+
+        assert_eq!(service.subscriptions().len(), 2);
+    }
+
+    #[test]
+    fn cancelling_a_property_subscription_leaves_the_others() {
+        let service = service();
+        for property in [
+            PropertyIdentifier::PresentValue,
+            PropertyIdentifier::StatusFlags,
+        ] {
+            service
+                .subscribe_cov_property(
+                    &property_request(property, Some(3600), Some(false)),
+                    Some(subscriber()),
+                )
+                .expect("subscribe");
+        }
+        assert_eq!(service.subscriptions().len(), 2);
+
+        service
+            .subscribe_cov_property(
+                &property_request(PropertyIdentifier::PresentValue, None, None),
+                Some(subscriber()),
+            )
+            .expect("cancel");
+
+        let held = service.subscriptions().all();
+        assert_eq!(held.len(), 1);
+        assert_eq!(
+            held[0].key.monitored_property,
+            Some(PropertyIdentifier::StatusFlags),
+            "the one that was not named survives"
+        );
+    }
+
+    fn active_subscriptions(service: &ObjectService) -> Vec<CovSubscriptionValue> {
+        let values = service
+            .read_property(&ReadPropertyRequest::new(
+                service.database().get_device_id(),
+                PropertyIdentifier::ActiveCovSubscriptions,
+            ))
+            .expect("read Active_COV_Subscriptions")
+            .property_values;
+
+        // A list-valued property arrives as its entries: the response carries the
+        // values of the property, and a list is several of them.
+        values
+            .iter()
+            .map(|entry| match entry {
+                PropertyValue::CovSubscription(subscription) => subscription.clone(),
+                other => panic!("expected a subscription, got {other:?}"),
+            })
+            .collect()
+    }
+
+    /// What a workstation asks the device when it wants to know who is watching
+    /// what -- including whether the subscription it thinks it holds is there.
+    #[test]
+    fn a_subscription_appears_in_active_cov_subscriptions() {
+        let service = service();
+        service.subscriptions().set_now(100);
+        service
+            .subscribe_cov(&request(Some(3600), Some(true)), Some(subscriber()))
+            .expect("subscribe");
+
+        let active = active_subscriptions(&service);
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].recipient.process_identifier, 777);
+        assert_eq!(
+            active[0].recipient.recipient,
+            Recipient::Address(BacnetAddress {
+                network: 0,
+                mac_address: vec![192, 168, 6, 1, 0xBA, 0xC0],
+            }),
+            "the address it subscribed from, as a BACnet/IP MAC"
+        );
+        assert!(active[0].issue_confirmed_notifications);
+        assert_eq!(active[0].time_remaining, 3600);
+        assert_eq!(
+            active[0].monitored_property.object_identifier,
+            ObjectIdentifier::new(ObjectType::AnalogValue, 1)
+        );
+        assert_eq!(
+            active[0].monitored_property.property_identifier,
+            PropertyIdentifier::PresentValue,
+            "a plain SubscribeCOV names no property, but the field is not optional"
+        );
+    }
+
+    /// The lifetime the subscriber has left, not the one it asked for.
+    #[test]
+    fn time_remaining_counts_down_with_the_engine_clock() {
+        let service = service();
+        service.subscriptions().set_now(100);
+        service
+            .subscribe_cov(&request(Some(600), Some(false)), Some(subscriber()))
+            .expect("subscribe");
+
+        service.subscriptions().set_now(400);
+        assert_eq!(active_subscriptions(&service)[0].time_remaining, 300);
+
+        service.subscriptions().set_now(700);
+        assert_eq!(
+            active_subscriptions(&service)[0].time_remaining,
+            0,
+            "past its expiry it has none left, until the engine sweeps it"
+        );
+    }
+
+    /// A subscription with no lifetime lasts until it is cancelled, which the
+    /// standard reports as zero remaining rather than as an absent field.
+    #[test]
+    fn a_subscription_that_never_expires_reports_no_time_remaining() {
+        let service = service();
+        service
+            .subscribe_cov(&request(Some(0), Some(false)), Some(subscriber()))
+            .expect("subscribe");
+
+        assert_eq!(active_subscriptions(&service)[0].time_remaining, 0);
+    }
+
+    #[test]
+    fn a_property_subscription_reports_the_property_and_its_increment() {
+        let service = service();
+        let mut request = property_request(PropertyIdentifier::StatusFlags, Some(60), Some(false));
+        request.cov_increment = Some(2.5);
+        service
+            .subscribe_cov_property(&request, Some(subscriber()))
+            .expect("subscribe");
+
+        let active = active_subscriptions(&service);
+
+        assert_eq!(
+            active[0].monitored_property.property_identifier,
+            PropertyIdentifier::StatusFlags
+        );
+        assert_eq!(active[0].cov_increment, Some(2.5));
+    }
+
+    #[test]
+    fn a_cancelled_subscription_leaves_the_list() {
+        let service = service();
+        service
+            .subscribe_cov(&request(Some(3600), Some(false)), Some(subscriber()))
+            .expect("subscribe");
+        service
+            .subscribe_cov(&request(None, None), Some(subscriber()))
+            .expect("cancel");
+
+        assert!(
+            active_subscriptions(&service).is_empty(),
+            "a device with no subscribers reports an empty list, not an error"
+        );
+    }
+
+    /// A HashMap iterates in whatever order it likes. A workstation polling the
+    /// property would see the rows shuffle, and a diff of two reads would be
+    /// noise.
+    #[test]
+    fn the_list_is_ordered_the_same_way_every_read() {
+        let service = service();
+        for process in [903, 12, 461] {
+            let mut plain = request(Some(3600), Some(false));
+            plain.subscriber_process_identifier = process;
+            service
+                .subscribe_cov(&plain, Some(subscriber()))
+                .expect("subscribe");
+        }
+
+        let processes: Vec<_> = active_subscriptions(&service)
+            .iter()
+            .map(|subscription| subscription.recipient.process_identifier)
+            .collect();
+
+        assert_eq!(processes, vec![12, 461, 903]);
+        assert_eq!(
+            active_subscriptions(&service)
+                .iter()
+                .map(|subscription| subscription.recipient.process_identifier)
+                .collect::<Vec<_>>(),
+            processes,
+            "and the same again on the next read"
+        );
+    }
+
+    /// It is a property of the Device object alone, and a client asking for
+    /// every property should be told it is there.
+    #[test]
+    fn the_device_lists_the_property_and_other_objects_do_not() {
+        let service = service();
+        let device = service.database().get_device_id();
+
+        assert!(service
+            .properties_for(device)
+            .expect("device properties")
+            .contains(&PropertyIdentifier::ActiveCovSubscriptions));
+        assert!(!service
+            .properties_for(ObjectIdentifier::new(ObjectType::AnalogValue, 1))
+            .expect("object properties")
+            .contains(&PropertyIdentifier::ActiveCovSubscriptions));
+        assert!(
+            service
+                .read_property(&ReadPropertyRequest::new(
+                    ObjectIdentifier::new(ObjectType::AnalogValue, 1),
+                    PropertyIdentifier::ActiveCovSubscriptions,
+                ))
+                .is_err(),
+            "an analog value has no subscription list of its own"
+        );
+    }
+
+    /// Unknown object and unknown property are different mistakes, and the
+    /// subscriber is told which one it made.
+    #[test]
+    fn subscribing_to_a_property_the_object_lacks_is_refused() {
+        let service = service();
+        assert!(matches!(
+            service.subscribe_cov_property(
+                &property_request(PropertyIdentifier::NumberOfStates, Some(60), Some(false)),
+                Some(subscriber())
+            ),
+            Err(ObjectError::UnknownProperty)
+        ));
+
+        let mut missing = property_request(PropertyIdentifier::PresentValue, Some(60), Some(false));
+        missing.monitored_object_identifier = ObjectIdentifier::new(ObjectType::AnalogValue, 99);
+        assert!(matches!(
+            service.subscribe_cov_property(&missing, Some(subscriber())),
+            Err(ObjectError::NotFound)
+        ));
+        assert!(service.subscriptions().is_empty());
+    }
+
+    #[test]
+    fn subscribing_to_one_element_of_an_array_is_refused() {
+        let service = service();
+        let mut request =
+            property_request(PropertyIdentifier::PriorityArray, Some(60), Some(false));
+        request.monitored_property = crate::service::PropertyReference::with_array_index(
+            PropertyIdentifier::PriorityArray,
+            3,
+        );
+
+        assert!(matches!(
+            service.subscribe_cov_property(&request, Some(subscriber())),
+            Err(ObjectError::OptionalFunctionalityNotSupported)
+        ));
+    }
+
+    #[test]
+    fn a_subscribe_request_round_trips_through_the_wire() {
+        let original = request(Some(3600), Some(true));
+        let mut encoded = Vec::new();
+        original.encode(&mut encoded).expect("encode");
+
+        let decoded = SubscribeCovRequest::decode(&encoded).expect("decode");
+        assert_eq!(decoded.subscriber_process_identifier, 777);
+        assert_eq!(
+            decoded.monitored_object_identifier,
+            original.monitored_object_identifier
+        );
+        assert_eq!(decoded.issue_confirmed_notifications, Some(true));
+        assert_eq!(decoded.lifetime, Some(3600), "must not truncate to a byte");
+        assert!(!decoded.is_cancellation());
+    }
+
+    #[test]
+    fn a_cancellation_round_trips_as_one() {
+        let mut encoded = Vec::new();
+        request(None, None).encode(&mut encoded).expect("encode");
+        assert!(SubscribeCovRequest::decode(&encoded)
+            .expect("decode")
+            .is_cancellation());
     }
 }

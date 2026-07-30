@@ -746,6 +746,8 @@ impl ProtocolServicesSupported {
         Self::READ_PROPERTY
             | Self::READ_PROPERTY_MULTIPLE
             | Self::WRITE_PROPERTY
+            | Self::SUBSCRIBE_COV
+            | Self::SUBSCRIBE_COV_PROPERTY
             | Self::I_AM
             | Self::WHO_IS
     }
@@ -978,7 +980,12 @@ mod tests {
                 .enumerate()
                 .filter_map(|(index, enabled)| enabled.then_some(index))
                 .collect::<Vec<_>>(),
-            vec![12, 14, 15, 26, 34]
+            // SubscribeCOV (5), ReadProperty (12), ReadPropertyMultiple (14),
+            // WriteProperty (15), I-Am (26), Who-Is (34),
+            // SubscribeCOVProperty (38). These are BACnetServicesSupported bit
+            // numbers, which are not the service choices the APDU carries:
+            // SubscribeCOVProperty arrives as service choice 28.
+            vec![5, 12, 14, 15, 26, 34, 38]
         );
 
         let PropertyValue::BitString(object_types) = device

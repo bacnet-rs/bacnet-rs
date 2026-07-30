@@ -6,7 +6,7 @@
 use crate::object::{
     event_state::EventState,
     intrinsic::{
-        intrinsic_get, intrinsic_property_list, intrinsic_set, status_flags_for, AlarmEvaluation,
+        intrinsic_get, intrinsic_property_list, intrinsic_set, status_flags_bits, AlarmEvaluation,
         AlarmTrigger, IntrinsicReporting,
     },
     reliability::Reliability,
@@ -35,7 +35,7 @@ struct MultistateView<'a> {
     object_name: &'a str,
     description: &'a str,
     present_value: u32,
-    status_flags: u8,
+    overridden: bool,
     event_state: EventState,
     reliability: Reliability,
     out_of_service: bool,
@@ -63,12 +63,12 @@ fn shared_get(
         PropertyIdentifier::Description => {
             PropertyValue::CharacterString(view.description.to_owned())
         }
-        PropertyIdentifier::StatusFlags => PropertyValue::BitString(vec![
-            view.status_flags & 0x08 != 0,
-            view.status_flags & 0x04 != 0,
-            view.status_flags & 0x02 != 0,
-            view.status_flags & 0x01 != 0,
-        ]),
+        PropertyIdentifier::StatusFlags => PropertyValue::BitString(status_flags_bits(
+            view.event_state,
+            view.reliability,
+            view.out_of_service,
+            view.overridden,
+        )),
         PropertyIdentifier::EventState => {
             PropertyValue::Enumerated(u16::from(view.event_state).into())
         }
@@ -272,7 +272,6 @@ macro_rules! multistate_intrinsic_methods {
 
         fn apply_event_state(&mut self, state: EventState) {
             self.event_state = state;
-            self.status_flags = status_flags_for(state, self.out_of_service);
         }
 
         fn is_out_of_service(&self) -> bool {
@@ -294,8 +293,9 @@ pub struct MultiStateInput {
     pub description: String,
     /// Device type
     pub device_type: String,
-    /// Status flags (4 bits: in_alarm, fault, overridden, out_of_service)
-    pub status_flags: u8,
+    /// Whether an operator has overridden the point. The other Status_Flags
+    /// bits are derived from Event_State, Reliability and Out_Of_Service.
+    pub overridden: bool,
     /// Event state
     pub event_state: EventState,
     /// Reliability
@@ -325,8 +325,9 @@ pub struct MultiStateOutput {
     pub description: String,
     /// Device type
     pub device_type: String,
-    /// Status flags
-    pub status_flags: u8,
+    /// Whether an operator has overridden the point. The other Status_Flags
+    /// bits are derived from Event_State, Reliability and Out_Of_Service.
+    pub overridden: bool,
     /// Event state
     pub event_state: EventState,
     /// Reliability
@@ -358,8 +359,9 @@ pub struct MultiStateValue {
     pub present_value: u32,
     /// Description
     pub description: String,
-    /// Status flags
-    pub status_flags: u8,
+    /// Whether an operator has overridden the point. The other Status_Flags
+    /// bits are derived from Event_State, Reliability and Out_Of_Service.
+    pub overridden: bool,
     /// Event state
     pub event_state: EventState,
     /// Reliability
@@ -394,7 +396,7 @@ impl MultiStateInput {
             present_value: 1,
             description: String::new(),
             device_type: String::new(),
-            status_flags: 0,
+            overridden: false,
             event_state: EventState::Normal,
             reliability: Reliability::NoFaultDetected,
             out_of_service: false,
@@ -456,7 +458,7 @@ impl MultiStateInput {
             object_name: &self.object_name,
             description: &self.description,
             present_value: self.present_value,
-            status_flags: self.status_flags,
+            overridden: self.overridden,
             event_state: self.event_state,
             reliability: self.reliability,
             out_of_service: self.out_of_service,
@@ -482,7 +484,7 @@ impl MultiStateOutput {
             present_value: 1,
             description: String::new(),
             device_type: String::new(),
-            status_flags: 0,
+            overridden: false,
             event_state: EventState::Normal,
             reliability: Reliability::NoFaultDetected,
             out_of_service: false,
@@ -543,7 +545,7 @@ impl MultiStateOutput {
             object_name: &self.object_name,
             description: &self.description,
             present_value: self.present_value,
-            status_flags: self.status_flags,
+            overridden: self.overridden,
             event_state: self.event_state,
             reliability: self.reliability,
             out_of_service: self.out_of_service,
@@ -568,7 +570,7 @@ impl MultiStateValue {
             object_name,
             present_value: 1,
             description: String::new(),
-            status_flags: 0,
+            overridden: false,
             event_state: EventState::Normal,
             reliability: Reliability::NoFaultDetected,
             out_of_service: false,
@@ -619,7 +621,7 @@ impl MultiStateValue {
             object_name: &self.object_name,
             description: &self.description,
             present_value: self.present_value,
-            status_flags: self.status_flags,
+            overridden: self.overridden,
             event_state: self.event_state,
             reliability: self.reliability,
             out_of_service: self.out_of_service,

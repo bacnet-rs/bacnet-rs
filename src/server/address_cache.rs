@@ -63,6 +63,21 @@ impl AddressCache {
     }
 }
 
+/// Describe an address as a BACnet/IP MAC: four octets of IPv4 then a port.
+///
+/// The inverse of [`socket_address_from_mac`]. Only an IPv4 peer has one —
+/// Annex J's MAC is six octets, and there is nothing honest to put there for an
+/// IPv6 peer — so this returns `None` rather than a shortened address that would
+/// decode as somewhere else.
+pub(crate) fn mac_from_socket_address(address: SocketAddr) -> Option<Vec<u8>> {
+    let SocketAddr::V4(address) = address else {
+        return None;
+    };
+    let mut mac = address.ip().octets().to_vec();
+    mac.extend_from_slice(&address.port().to_be_bytes());
+    Some(mac)
+}
+
 /// Interpret a BACnet/IP MAC as an address: four octets of IPv4 then a port.
 fn socket_address_from_mac(mac: &[u8]) -> Option<SocketAddr> {
     if mac.len() != 6 {

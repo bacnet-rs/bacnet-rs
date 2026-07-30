@@ -9,8 +9,8 @@ use crate::{
     network::Npdu,
     object::database::ObjectDatabase,
     service::{
-        event_notification::EventNotification, AbortReason, ConfirmedServiceChoice, RejectReason,
-        UnconfirmedServiceChoice,
+        cov_notification::CovNotification, event_notification::EventNotification, AbortReason,
+        ConfirmedServiceChoice, RejectReason, UnconfirmedServiceChoice,
     },
 };
 
@@ -32,7 +32,23 @@ pub struct BacnetIpServer {
     socket: UdpSocket,
     dispatcher: ServerDispatcher,
     receive_buffer: Vec<u8>,
+    observer: Option<RequestObserver>,
 }
+
+/// One request a server decoded, and whatever it answered with.
+///
+/// `response` is `None` for a request that needs no reply — an unconfirmed
+/// service the device ignores, or a Who-Is outside its instance range.
+pub struct ServedRequest<'a> {
+    /// Where the datagram came from.
+    pub source: Option<SocketAddr>,
+    /// The decoded request.
+    pub request: &'a Apdu,
+    /// The reply this device produced, if any.
+    pub response: Option<&'a Apdu>,
+}
+
+type RequestObserver = Box<dyn Fn(&ServedRequest<'_>) + Send + Sync>;
 
 impl BacnetIpServer {
     pub fn bind<A: ToSocketAddrs>(
@@ -48,7 +64,24 @@ impl BacnetIpServer {
             socket,
             dispatcher: ServerDispatcher::new(ObjectService::new(database)),
             receive_buffer: vec![0; MAX_BACNET_IP_FRAME],
+            observer: None,
         }
+    }
+
+    /// Show every decoded request, and what it was answered with, to `observer`.
+    ///
+    /// For tracing what a remote client is actually asking for: which service,
+    /// against which object, and whether the device liked it. The observer runs
+    /// on the serve loop, so it should be cheap — writing a line, not doing I/O
+    /// that can block.
+    ///
+    /// A datagram whose APDU will not decode is not observed: there is no
+    /// request to describe, only bytes. The reject that goes back still does.
+    pub fn observe_requests(
+        &mut self,
+        observer: impl Fn(&ServedRequest<'_>) + Send + Sync + 'static,
+    ) {
+        self.observer = Some(Box::new(observer));
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, ServerError> {
@@ -86,6 +119,7 @@ impl BacnetIpServer {
             &self.dispatcher,
             &self.receive_buffer[..length],
             Some(source),
+            self.observer.as_ref(),
         )?
         else {
             return Ok(false);
@@ -222,10 +256,11 @@ async fn serve_async_request(
     source: SocketAddr,
     buffer: Vec<u8>,
 ) -> Result<(), ServerError> {
-    let response =
-        tokio::task::spawn_blocking(move || process_datagram(&dispatcher, &buffer, Some(source)))
-            .await
-            .map_err(|error| ServerError::AsyncTask(error.to_string()))??;
+    let response = tokio::task::spawn_blocking(move || {
+        process_datagram(&dispatcher, &buffer, Some(source), None)
+    })
+    .await
+    .map_err(|error| ServerError::AsyncTask(error.to_string()))??;
     if let Some(response) = response {
         socket
             .send_to(&response.frame, response.destination.unwrap_or(source))
@@ -253,6 +288,7 @@ fn process_datagram(
     dispatcher: &ServerDispatcher,
     data: &[u8],
     source: Option<SocketAddr>,
+    observer: Option<&RequestObserver>,
 ) -> Result<Option<DatagramResponse>, ServerError> {
     let Some((request_npdu, apdu_data, destination)) = decode_bacnet_ip_frame(data) else {
         return Ok(None);
@@ -261,7 +297,22 @@ fn process_datagram(
         return Ok(None);
     }
     let response = match Apdu::decode(apdu_data) {
-        Ok(request_apdu) => dispatcher.dispatch(&request_npdu, request_apdu, source)?,
+        Ok(request_apdu) => {
+            // Dispatching consumes the request, so an observer needs its own
+            // copy. Only made when one is installed: this is a debugging path,
+            // and a device serving a gateway should not pay for it otherwise.
+            let observed = observer.map(|_| request_apdu.clone());
+            let response = dispatcher.dispatch(&request_npdu, request_apdu, source)?;
+
+            if let (Some(observer), Some(request)) = (observer, &observed) {
+                observer(&ServedRequest {
+                    source,
+                    request,
+                    response: response.as_ref().map(|response| &response.apdu),
+                });
+            }
+            response
+        }
         Err(_) => response_for_undecodable_apdu(&request_npdu, apdu_data),
     };
     let Some(response) = response else {
@@ -389,6 +440,54 @@ impl Notifier {
 
         let npdu = if confirmed {
             // A confirmed request asks the recipient to reply.
+            let mut npdu = Npdu::new();
+            npdu.control.expecting_reply = true;
+            npdu.encode()
+        } else {
+            Npdu::new().encode()
+        };
+
+        let frame = wrap_bvlc_parts(BvlcFunction::OriginalUnicastNpdu, &[&npdu, &apdu.encode()]);
+        self.socket.send_to(&frame, destination)?;
+        Ok(())
+    }
+
+    /// Send a COV notification to `destination`.
+    ///
+    /// Same confirmed/unconfirmed reasoning as an event notification: the
+    /// subscriber said which it wanted when it subscribed.
+    pub fn send_cov_notification(
+        &self,
+        destination: SocketAddr,
+        notification: &CovNotification,
+        confirmed: bool,
+    ) -> Result<(), ServerError> {
+        let mut service_data = Vec::new();
+        notification
+            .encode(&mut service_data)
+            .map_err(ServerError::from)?;
+
+        let apdu = if confirmed {
+            Apdu::ConfirmedRequest {
+                segmented: false,
+                more_follows: false,
+                segmented_response_accepted: false,
+                max_segments: MaxSegments::Unspecified,
+                max_response_size: MaxApduSize::Up1476,
+                invoke_id: self.next_invoke_id(),
+                sequence_number: None,
+                proposed_window_size: None,
+                service_choice: ConfirmedServiceChoice::ConfirmedCovNotification,
+                service_data,
+            }
+        } else {
+            Apdu::UnconfirmedRequest {
+                service_choice: UnconfirmedServiceChoice::UnconfirmedCOVNotification,
+                service_data,
+            }
+        };
+
+        let npdu = if confirmed {
             let mut npdu = Npdu::new();
             npdu.control.expecting_reply = true;
             npdu.encode()
@@ -545,6 +644,97 @@ mod tests {
         assert_eq!(priority_array[7], PropertyValue::Real(24.0));
     }
 
+    /// What a device operator needs to see when a client is behaving oddly: the
+    /// service that arrived and what went back — here a service the device does
+    /// not execute, which is answered with a reject rather than silence.
+    #[test]
+    fn an_observer_is_shown_the_request_and_the_answer() {
+        let database = Arc::new(ObjectDatabase::new(Device::new(
+            1234,
+            "Test device".to_string(),
+        )));
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let server = BacnetIpServer::from_socket(socket, database);
+
+        let request = Apdu::ConfirmedRequest {
+            segmented: false,
+            more_follows: false,
+            segmented_response_accepted: false,
+            max_segments: crate::app::MaxSegments::Unspecified,
+            max_response_size: crate::app::MaxApduSize::Up1476,
+            invoke_id: 7,
+            sequence_number: None,
+            proposed_window_size: None,
+            service_choice: ConfirmedServiceChoice::AtomicReadFile,
+            service_data: Vec::new(),
+        };
+        let mut payload = Npdu::new().encode();
+        payload.extend_from_slice(&request.encode());
+        let frame = wrap_bvlc(BvlcFunction::OriginalUnicastNpdu, &payload);
+
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&seen);
+        let observer: RequestObserver = Box::new(move |served: &ServedRequest<'_>| {
+            let service = match served.request {
+                Apdu::ConfirmedRequest { service_choice, .. } => format!("{service_choice:?}"),
+                other => format!("{other:?}"),
+            };
+            let answer = match served.response {
+                Some(Apdu::Reject { reject_reason, .. }) => format!("Reject {reject_reason}"),
+                Some(other) => format!("{other:?}"),
+                None => "nothing".to_string(),
+            };
+            recorder
+                .lock()
+                .unwrap()
+                .push(format!("{service}: {answer}"));
+        });
+
+        process_datagram(server.dispatcher(), &frame, None, Some(&observer)).unwrap();
+
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            ["AtomicReadFile: Reject UnrecognizedService"]
+        );
+    }
+
+    /// A Who-Is for another device is answered with nothing, and the observer is
+    /// told that rather than left to infer it from a missing line.
+    #[test]
+    fn an_observer_sees_a_request_that_needed_no_answer() {
+        let database = Arc::new(ObjectDatabase::new(Device::new(
+            1234,
+            "Test device".to_string(),
+        )));
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let server = BacnetIpServer::from_socket(socket, database);
+
+        let mut service_data = Vec::new();
+        crate::service::WhoIsRequest::for_range(4321, 4321)
+            .encode(&mut service_data)
+            .unwrap();
+        let request = Apdu::UnconfirmedRequest {
+            service_choice: UnconfirmedServiceChoice::WhoIs,
+            service_data,
+        };
+        let mut payload = Npdu::new().encode();
+        payload.extend_from_slice(&request.encode());
+        let frame = wrap_bvlc(BvlcFunction::OriginalUnicastNpdu, &payload);
+
+        let answered = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let recorder = Arc::clone(&answered);
+        let observer: RequestObserver = Box::new(move |served: &ServedRequest<'_>| {
+            recorder.store(
+                served.response.is_some(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        });
+
+        process_datagram(server.dispatcher(), &frame, None, Some(&observer)).unwrap();
+
+        assert!(!answered.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
     #[test]
     fn segmented_confirmed_request_is_aborted() {
         let database = Arc::new(ObjectDatabase::new(Device::new(
@@ -570,7 +760,7 @@ mod tests {
         payload.extend_from_slice(&request.encode());
         let frame = wrap_bvlc(BvlcFunction::OriginalUnicastNpdu, &payload);
 
-        let response = process_datagram(server.dispatcher(), &frame, None)
+        let response = process_datagram(server.dispatcher(), &frame, None, None)
             .unwrap()
             .unwrap();
         let (_, apdu_data, _) = decode_bacnet_ip_frame(&response.frame).unwrap();
@@ -595,22 +785,24 @@ mod tests {
 
         let network_message = wrap_bvlc(BvlcFunction::OriginalBroadcastNpdu, &[0x01, 0x80, 0x00]);
         assert!(
-            process_datagram(server.dispatcher(), &network_message, None)
+            process_datagram(server.dispatcher(), &network_message, None, None)
                 .unwrap()
                 .is_none()
         );
 
         let malformed_apdu = wrap_bvlc(BvlcFunction::OriginalUnicastNpdu, &[0x01, 0x00, 0x00]);
-        assert!(process_datagram(server.dispatcher(), &malformed_apdu, None)
-            .unwrap()
-            .is_none());
+        assert!(
+            process_datagram(server.dispatcher(), &malformed_apdu, None, None)
+                .unwrap()
+                .is_none()
+        );
 
         let malformed_who_is = wrap_bvlc(
             BvlcFunction::OriginalBroadcastNpdu,
             &[0x01, 0x00, 0x10, 0x08, 0x09, 0x01, 0xFF],
         );
         assert!(
-            process_datagram(server.dispatcher(), &malformed_who_is, None)
+            process_datagram(server.dispatcher(), &malformed_who_is, None, None)
                 .unwrap()
                 .is_none()
         );
@@ -629,7 +821,7 @@ mod tests {
             &[0x01, 0x00, 0x00, 0x05, 42, 18],
         );
 
-        let response = process_datagram(server.dispatcher(), &frame, None)
+        let response = process_datagram(server.dispatcher(), &frame, None, None)
             .unwrap()
             .unwrap();
         let (_, apdu_data, _) = decode_bacnet_ip_frame(&response.frame).unwrap();
@@ -656,7 +848,7 @@ mod tests {
         forwarded_payload.extend_from_slice(&[0x01, 0x00, 0x10, 0x08]);
         let frame = wrap_bvlc(BvlcFunction::ForwardedNpdu, &forwarded_payload);
 
-        let response = process_datagram(server.dispatcher(), &frame, None)
+        let response = process_datagram(server.dispatcher(), &frame, None, None)
             .unwrap()
             .unwrap();
         assert_eq!(response.destination, Some(origin));

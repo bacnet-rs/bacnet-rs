@@ -4,7 +4,8 @@ use crate::{
     object::ObjectError,
     service::{
         AbortReason, ConfirmedServiceChoice, ReadPropertyMultipleRequest, ReadPropertyRequest,
-        RejectReason, UnconfirmedServiceChoice, WhoIsRequest, WritePropertyRequest,
+        RejectReason, SubscribeCovPropertyRequest, SubscribeCovRequest, UnconfirmedServiceChoice,
+        WhoIsRequest, WritePropertyRequest,
     },
 };
 
@@ -142,6 +143,30 @@ impl ServerDispatcher {
                         response.encode(&mut service_data)?;
                         Ok(complex_ack(invoke_id, service_choice, service_data))
                     }
+                    Err(_) => Ok(reject(invoke_id, RejectReason::InvalidTag)),
+                }
+            }
+            ConfirmedServiceChoice::SubscribeCOV => {
+                match SubscribeCovRequest::decode(service_data) {
+                    Ok(request) => match self.objects.subscribe_cov(&request, source) {
+                        Ok(()) => Ok(Apdu::SimpleAck {
+                            invoke_id,
+                            service_choice: service_choice as u8,
+                        }),
+                        Err(error) => Ok(object_error_apdu(invoke_id, service_choice, error)),
+                    },
+                    Err(_) => Ok(reject(invoke_id, RejectReason::InvalidTag)),
+                }
+            }
+            ConfirmedServiceChoice::SubscribeCOVProperty => {
+                match SubscribeCovPropertyRequest::decode(service_data) {
+                    Ok(request) => match self.objects.subscribe_cov_property(&request, source) {
+                        Ok(()) => Ok(Apdu::SimpleAck {
+                            invoke_id,
+                            service_choice: service_choice as u8,
+                        }),
+                        Err(error) => Ok(object_error_apdu(invoke_id, service_choice, error)),
+                    },
                     Err(_) => Ok(reject(invoke_id, RejectReason::InvalidTag)),
                 }
             }
@@ -403,6 +428,57 @@ mod tests {
             result.property_identifier == PropertyIdentifier::PresentValue
                 && result.value == PropertyResultValue::Error(2, 50)
         }));
+    }
+
+    /// A client that wants one property rather than the standard pair sends
+    /// service choice 28. Before it was dispatched this drew a Reject with
+    /// 'unrecognized-service', and such clients fall back to polling.
+    #[test]
+    fn a_subscribe_cov_property_request_is_acknowledged() {
+        let dispatcher = dispatcher_with_analog_values(1);
+        let request = SubscribeCovPropertyRequest {
+            subscriber_process_identifier: 777,
+            monitored_object_identifier: ObjectIdentifier::new(ObjectType::AnalogValue, 1),
+            issue_confirmed_notifications: Some(false),
+            lifetime: Some(3600),
+            monitored_property: PropertyReference::new(PropertyIdentifier::PresentValue),
+            cov_increment: Some(0.5),
+        };
+        let mut service_data = Vec::new();
+        request.encode(&mut service_data).unwrap();
+
+        let response = dispatcher
+            .dispatch(
+                &Npdu::new(),
+                confirmed_request(
+                    ConfirmedServiceChoice::SubscribeCOVProperty,
+                    service_data,
+                    MaxApduSize::Up1476,
+                    false,
+                ),
+                Some("192.168.6.1:47808".parse().unwrap()),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            matches!(
+                response.apdu,
+                Apdu::SimpleAck {
+                    invoke_id: 9,
+                    service_choice: 28,
+                }
+            ),
+            "expected a simple acknowledgement, got {:?}",
+            response.apdu
+        );
+        let held = dispatcher.objects.subscriptions().all();
+        assert_eq!(held.len(), 1);
+        assert_eq!(
+            held[0].key.monitored_property,
+            Some(PropertyIdentifier::PresentValue)
+        );
+        assert_eq!(held[0].cov_increment, Some(0.5));
     }
 
     #[test]

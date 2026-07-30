@@ -15,6 +15,10 @@
 //! confirmed/unconfirmed choice from their own entry. The device learns a
 //! recipient's address from the WriteProperty that registers it.
 //!
+//! The device also serves `SubscribeCOV`, so a subscriber can watch
+//! Present_Value instead of polling it. Analog objects honour `COV_Increment`
+//! (0.5 on `analog-value,1`), so small movements do not report.
+//!
 //! Runtime state — registrations, present values, event states and learned
 //! addresses — is persisted, so a restart resumes rather than resets. Set
 //! `ALARM_DEVICE_STATE` to choose the file; the default is printed at startup.
@@ -41,6 +45,7 @@ use std::{
 };
 
 use bacnet_rs::{
+    cov::CovEngine,
     event::EventEngine,
     object::{
         database::ObjectDatabase, AnalogValue, BinaryPV, BinaryValue, Device, EventState,
@@ -241,6 +246,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_out_of_range_reporting(NOTIFICATION_CLASS, Some(18.0), Some(24.0), 0.5);
     temperature.description = "Analog limit alarm test object".to_string();
     temperature.present_value = 21.0;
+    // Without an increment every read reports, which makes a COV subscriber as
+    // noisy as polling.
+    temperature.cov_increment = Some(0.5);
     database.add_object(Box::new(temperature))?;
 
     // CHANGE_OF_RELIABILITY on an analog object with no limits configured.
@@ -263,6 +271,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let server = BacnetIpServer::bind(&bind_address, Arc::clone(&database))?;
     let addresses = server.object_service().addresses().clone();
+    let subscriptions = server.object_service().subscriptions().clone();
 
     let path = state_path();
     let restored = load_state(&path);
@@ -272,6 +281,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Hosting alarm device {device_instance} on {bind_address}");
     println!("  notifications routed through notification-class,{NOTIFICATION_CLASS}");
     println!("  state file: {}", path.display());
+    println!("  COV subscriptions accepted; notifications follow COV_Increment");
     if had_state {
         println!(
             "  resumed: {} recipient(s), {} binding(s)",
@@ -287,14 +297,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // sending never blocks `serve_once`.
     let engine_database = Arc::clone(&database);
     let engine_addresses = addresses.clone();
+    let engine_subscriptions = subscriptions.clone();
     let notifier = server.notifier()?;
     thread::spawn(move || {
         let mut engine = EventEngine::new(device_instance);
+        let mut cov = CovEngine::new(device_instance);
         let started = Instant::now();
         let mut last_saved = restored;
 
         loop {
             let now_seconds = started.elapsed().as_secs();
+
+            // COV reporting shares the tick: a subscriber watching an alarming
+            // object hears about the value change and the event separately.
+            for addressed in cov.tick(&engine_database, &engine_subscriptions, now_seconds) {
+                println!(
+                    "cov: {:?} -> {} pid {} ({} value(s), {})",
+                    addressed.notification.monitored_object,
+                    addressed.address,
+                    addressed.notification.subscriber_process_identifier,
+                    addressed.notification.list_of_values.len(),
+                    if addressed.confirmed {
+                        "confirmed"
+                    } else {
+                        "unconfirmed"
+                    },
+                );
+                if let Err(error) = notifier.send_cov_notification(
+                    addressed.address,
+                    &addressed.notification,
+                    addressed.confirmed,
+                ) {
+                    eprintln!("failed to send COV notification: {error}");
+                }
+            }
 
             for addressed in engine.tick(
                 &engine_database,
