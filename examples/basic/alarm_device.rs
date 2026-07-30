@@ -79,7 +79,8 @@ struct PersistedState {
 fn state_path() -> PathBuf {
     env::var("ALARM_DEVICE_STATE")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp/bacnet-rs-alarm-device-state.json"))
+        // temp_dir resolves per platform, so this works on Windows too.
+        .unwrap_or_else(|_| env::temp_dir().join("bacnet-rs-alarm-device-state.json"))
 }
 
 fn object_key(identifier: ObjectIdentifier) -> String {

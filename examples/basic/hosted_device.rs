@@ -11,14 +11,20 @@
 //! `Optional` selectors are not implemented yet.
 //!
 //! The hosted Device object advertises its actual services and the object types
-//! present in the database. A sample Device_Address_Binding and a Schedule
-//! object exercise constructed-value encoding. The server advertises and
-//! enforces no segmentation.
+//! present in the database. A sample Device_Address_Binding exercises
+//! constructed-value encoding. The server advertises and enforces no
+//! segmentation.
 //!
 //! The Analog Value is commandable. Present_Value accepts priorities 1 through
 //! 16, defaults to priority 16, and accepts Null to relinquish a priority slot.
 //! Indexed property writes are not implemented and return
 //! optional-functionality-not-supported.
+//!
+//! A Schedule drives that Analog Value from a weekly profile, stepping aside on
+//! the days listed by a Calendar object. A background thread ticks the schedule
+//! engine once a second against the local clock, so Present_Value follows the
+//! wall clock while the request loop keeps serving.
+//!
 //! COV subscriptions, event reporting, acting as a BBMD or foreign device, and
 //! segmented requests or responses are outside this profile.
 //!
@@ -35,133 +41,94 @@
 //!     -t 7F:00:00:02:BA:C0 1234
 //! ```
 
-use std::{env, sync::Arc};
+use std::{env, sync::Arc, thread, time::Duration};
 
 use bacnet_rs::{
     object::{
-        database::ObjectDatabase, AddressBinding, AnalogValue, BacnetObject, Device, ObjectError,
-        ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, ProtocolServicesSupported,
+        database::ObjectDatabase, AddressBinding, AnalogValue, Calendar, Device, ObjectIdentifier,
+        ObjectType, PropertyIdentifier, PropertyValue, ProtocolServicesSupported, Schedule,
     },
-    property::{DailyScheduleValue, ObjectPropertyReference, TimeValueValue},
+    property::{
+        CalendarEntryValue, DailyScheduleValue, SpecialEventPeriod, SpecialEventValue,
+        TimeValueValue, ANY, UNSPECIFIED_YEAR,
+    },
+    schedule::ScheduleEngine,
     server::BacnetIpServer,
 };
+use chrono::{Datelike, Local, Timelike};
 
-struct ExampleSchedule {
-    identifier: ObjectIdentifier,
-    target: ObjectIdentifier,
+const HOLIDAY_CALENDAR: u32 = 1;
+
+/// A BACnet date: year, month, day, weekday, with weekday 1 for Monday.
+type Date = (u16, u8, u8, u8);
+/// A BACnet time: hour, minute, second, hundredths.
+type Time = (u8, u8, u8, u8);
+
+fn time_value(hour: u8, value: f32) -> TimeValueValue {
+    TimeValueValue {
+        time: (hour, 0, 0, 0),
+        value: Box::new(PropertyValue::Real(value)),
+    }
 }
 
-impl ExampleSchedule {
-    fn new(instance: u32, target: ObjectIdentifier) -> Self {
-        Self {
-            identifier: ObjectIdentifier::new(ObjectType::Schedule, instance),
-            target,
+/// Occupied from 06:00 to 18:00 on weekdays; nothing scheduled at the weekend,
+/// so those days fall back to the setback default.
+fn office_hours(setpoint: ObjectIdentifier) -> Schedule {
+    let weekday = DailyScheduleValue {
+        time_values: vec![time_value(6, 21.0), time_value(18, 18.0)],
+    };
+    let weekend = DailyScheduleValue {
+        time_values: Vec::new(),
+    };
+    let days = std::array::from_fn(|day| {
+        if day < 5 {
+            weekday.clone()
+        } else {
+            weekend.clone()
         }
-    }
+    });
 
-    fn weekly_schedule(&self) -> Vec<PropertyValue> {
-        let weekday = DailyScheduleValue {
-            time_values: vec![
-                TimeValueValue {
-                    time: (6, 0, 0, 0),
-                    value: Box::new(PropertyValue::Real(21.0)),
-                },
-                TimeValueValue {
-                    time: (18, 0, 0, 0),
-                    value: Box::new(PropertyValue::Real(18.0)),
-                },
-            ],
-        };
-        let weekend = DailyScheduleValue {
-            time_values: vec![TimeValueValue {
-                time: (8, 0, 0, 0),
-                value: Box::new(PropertyValue::Real(19.0)),
-            }],
-        };
-
-        (0..7)
-            .map(|day| {
-                PropertyValue::DailySchedule(if day < 5 {
-                    weekday.clone()
-                } else {
-                    weekend.clone()
-                })
-            })
-            .collect()
-    }
-}
-
-impl BacnetObject for ExampleSchedule {
-    fn identifier(&self) -> ObjectIdentifier {
-        self.identifier
-    }
-
-    fn get_property(
-        &self,
-        property: PropertyIdentifier,
-    ) -> bacnet_rs::object::Result<PropertyValue> {
-        match property {
-            PropertyIdentifier::ObjectIdentifier => {
-                Ok(PropertyValue::ObjectIdentifier(self.identifier))
-            }
-            PropertyIdentifier::ObjectName => Ok(PropertyValue::CharacterString(
-                "Occupied temperature schedule".to_string(),
+    Schedule::new(1, "Occupied temperature schedule".to_string())
+        .with_description("Weekday setpoint profile with a holiday exception".to_string())
+        .with_default(PropertyValue::Real(16.0))
+        .with_weekly_schedule(days)
+        // On a day the calendar covers, hold the setback all day.
+        .with_exception(SpecialEventValue {
+            period: SpecialEventPeriod::CalendarReference(ObjectIdentifier::new(
+                ObjectType::Calendar,
+                HOLIDAY_CALENDAR,
             )),
-            PropertyIdentifier::ObjectType => {
-                Ok(PropertyValue::Enumerated(ObjectType::Schedule.into()))
-            }
-            PropertyIdentifier::PresentValue => Ok(PropertyValue::Real(21.0)),
-            PropertyIdentifier::EffectivePeriod => Ok(PropertyValue::List(vec![
-                PropertyValue::Date(255, 255, 255, 255),
-                PropertyValue::Date(255, 255, 255, 255),
-            ])),
-            PropertyIdentifier::WeeklySchedule => Ok(PropertyValue::Array(self.weekly_schedule())),
-            PropertyIdentifier::ScheduleDefault => Ok(PropertyValue::Real(18.0)),
-            PropertyIdentifier::ListOfObjectPropertyReferences => Ok(PropertyValue::List(vec![
-                PropertyValue::ObjectPropertyReference(ObjectPropertyReference {
-                    object_identifier: self.target,
-                    property_identifier: PropertyIdentifier::PresentValue,
-                    array_index: None,
-                }),
-            ])),
-            PropertyIdentifier::PriorityForWriting => Ok(PropertyValue::Unsigned(16)),
-            PropertyIdentifier::StatusFlags => {
-                Ok(PropertyValue::BitString(vec![false, false, false, false]))
-            }
-            PropertyIdentifier::OutOfService => Ok(PropertyValue::Boolean(false)),
-            PropertyIdentifier::Reliability => Ok(PropertyValue::Enumerated(0)),
-            _ => Err(ObjectError::UnknownProperty),
-        }
-    }
+            time_values: vec![time_value(0, 16.0)],
+            priority: 8,
+        })
+        .with_target(setpoint, PropertyIdentifier::PresentValue)
+}
 
-    fn set_property(
-        &mut self,
-        _property: PropertyIdentifier,
-        _value: PropertyValue,
-    ) -> bacnet_rs::object::Result<()> {
-        Err(ObjectError::PropertyNotWritable)
-    }
+fn holidays() -> Calendar {
+    Calendar::new(HOLIDAY_CALENDAR, "Holidays".to_string())
+        .with_description("Days the building runs unoccupied".to_string())
+        // Christmas Eve and Norwegian Constitution Day, every year.
+        .with_entry(CalendarEntryValue::Date(UNSPECIFIED_YEAR, 12, 24, ANY))
+        .with_entry(CalendarEntryValue::Date(UNSPECIFIED_YEAR, 5, 17, ANY))
+}
 
-    fn is_property_writable(&self, _property: PropertyIdentifier) -> bool {
-        false
-    }
-
-    fn property_list(&self) -> Vec<PropertyIdentifier> {
-        vec![
-            PropertyIdentifier::ObjectIdentifier,
-            PropertyIdentifier::ObjectName,
-            PropertyIdentifier::ObjectType,
-            PropertyIdentifier::PresentValue,
-            PropertyIdentifier::EffectivePeriod,
-            PropertyIdentifier::WeeklySchedule,
-            PropertyIdentifier::ScheduleDefault,
-            PropertyIdentifier::ListOfObjectPropertyReferences,
-            PropertyIdentifier::PriorityForWriting,
-            PropertyIdentifier::StatusFlags,
-            PropertyIdentifier::OutOfService,
-            PropertyIdentifier::Reliability,
-        ]
-    }
+/// The local clock as the BACnet date and time the engine expects, with weekday
+/// 1 for Monday.
+fn now() -> (Date, Time) {
+    let now = Local::now();
+    let date = (
+        now.year() as u16,
+        now.month() as u8,
+        now.day() as u8,
+        now.weekday().number_from_monday() as u8,
+    );
+    let time = (
+        now.hour() as u8,
+        now.minute() as u8,
+        now.second() as u8,
+        (now.timestamp_subsec_millis() / 10) as u8,
+    );
+    (date, time)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -194,7 +161,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     setpoint.present_value = 21.5;
     let setpoint_identifier = setpoint.identifier;
     database.add_object(Box::new(setpoint))?;
-    database.add_object(Box::new(ExampleSchedule::new(1, setpoint_identifier)))?;
+    database.add_object(Box::new(holidays()))?;
+    database.add_object(Box::new(office_hours(setpoint_identifier)))?;
+
+    // Scheduling runs alongside the request loop. The engine only touches the
+    // database, so evaluating a schedule never blocks `serve_once`.
+    let schedule_database = Arc::clone(&database);
+    thread::spawn(move || {
+        let mut engine = ScheduleEngine::new();
+        loop {
+            let (date, time) = now();
+            for write in engine.tick(&schedule_database, date, time) {
+                println!(
+                    "schedule: {:?} -> {:?}.{:?} = {} at priority {}{}",
+                    write.schedule,
+                    write.target.object_identifier,
+                    write.target.property_identifier,
+                    write.value,
+                    write.priority,
+                    if write.applied { "" } else { " (not applied)" },
+                );
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
 
     let mut server = BacnetIpServer::bind(&bind_address, database)?;
     println!("Hosting BACnet device {device_instance} on {bind_address}");
