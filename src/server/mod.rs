@@ -13,7 +13,7 @@ mod dispatcher;
 mod error;
 mod object_service;
 
-pub use address_cache::AddressCache;
+pub use address_cache::{AddressCache, NotificationTarget};
 #[cfg(feature = "async")]
 pub use bip::AsyncBacnetIpServer;
 pub use bip::{BacnetIpServer, Notifier, ServedRequest};

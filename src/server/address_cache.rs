@@ -18,6 +18,29 @@ use std::{
 use crate::object::ObjectIdentifier;
 use crate::property::Recipient;
 
+/// Where a notification goes.
+///
+/// A `Recipient_List` entry may name a broadcast rather than one device, which
+/// is not a socket address the cache can hand back — the caller has to send it
+/// differently. Keeping the two apart in the type stops a broadcast recipient
+/// being silently dropped for having no address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotificationTarget {
+    /// One device, at a known address.
+    Unicast(SocketAddr),
+    /// Every device on the local network.
+    Broadcast,
+}
+
+impl std::fmt::Display for NotificationTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unicast(address) => write!(f, "{address}"),
+            Self::Broadcast => write!(f, "broadcast"),
+        }
+    }
+}
+
 /// Device-to-address bindings shared between the request path that learns them
 /// and the notification path that uses them.
 #[derive(Clone, Default)]
@@ -41,14 +64,21 @@ impl AddressCache {
         self.bindings.read().unwrap().get(&device).copied()
     }
 
-    /// Resolve a `Recipient_List` recipient to an address.
+    /// Resolve a `Recipient_List` recipient to somewhere to send.
     ///
-    /// A `Recipient::Address` carries its own MAC; only BACnet/IP MACs — six
-    /// octets of address and port — can be turned into a socket address here.
-    pub fn resolve(&self, recipient: &Recipient) -> Option<SocketAddr> {
+    /// A `Recipient::Address` with an empty MAC is a broadcast — that is how a
+    /// client registers for notifications without naming itself, and gateways
+    /// fall back to it when a device rejects a device-form recipient. Otherwise
+    /// the MAC must be a BACnet/IP one: four octets of address and a port.
+    pub fn resolve(&self, recipient: &Recipient) -> Option<NotificationTarget> {
         match recipient {
-            Recipient::Device(device) => self.lookup(*device),
-            Recipient::Address(address) => socket_address_from_mac(&address.mac_address),
+            Recipient::Device(device) => self.lookup(*device).map(NotificationTarget::Unicast),
+            Recipient::Address(address) if address.mac_address.is_empty() => {
+                Some(NotificationTarget::Broadcast)
+            }
+            Recipient::Address(address) => {
+                socket_address_from_mac(&address.mac_address).map(NotificationTarget::Unicast)
+            }
         }
     }
 
@@ -98,6 +128,10 @@ mod tests {
         ObjectIdentifier::new(ObjectType::Device, 5785)
     }
 
+    fn unicast(address: &str) -> Option<NotificationTarget> {
+        Some(NotificationTarget::Unicast(address.parse().unwrap()))
+    }
+
     #[test]
     fn a_learned_binding_resolves_a_device_recipient() {
         let cache = AddressCache::new();
@@ -106,7 +140,10 @@ mod tests {
         let address: SocketAddr = "192.168.6.1:47808".parse().unwrap();
         cache.learn(gateway(), address);
 
-        assert_eq!(cache.resolve(&Recipient::Device(gateway())), Some(address));
+        assert_eq!(
+            cache.resolve(&Recipient::Device(gateway())),
+            Some(NotificationTarget::Unicast(address))
+        );
     }
 
     #[test]
@@ -117,7 +154,7 @@ mod tests {
 
         assert_eq!(
             cache.resolve(&Recipient::Device(gateway())),
-            Some("192.168.6.9:47808".parse().unwrap())
+            unicast("192.168.6.9:47808")
         );
     }
 
@@ -129,10 +166,27 @@ mod tests {
             mac_address: vec![192, 168, 6, 1, 0xBA, 0xC0],
         });
 
-        assert_eq!(
-            cache.resolve(&recipient),
-            Some("192.168.6.1:47808".parse().unwrap())
-        );
+        assert_eq!(cache.resolve(&recipient), unicast("192.168.6.1:47808"));
+    }
+
+    /// An empty MAC is how a recipient asks to be broadcast to, and it is what a
+    /// gateway falls back to when a device rejects a device-form recipient. It
+    /// used to resolve to nothing, so every notification to it was dropped.
+    #[test]
+    fn an_empty_mac_is_a_broadcast_recipient() {
+        let cache = AddressCache::new();
+
+        for network in [0, 65535] {
+            let recipient = Recipient::Address(BacnetAddress {
+                network,
+                mac_address: Vec::new(),
+            });
+            assert_eq!(
+                cache.resolve(&recipient),
+                Some(NotificationTarget::Broadcast),
+                "network {network}"
+            );
+        }
     }
 
     #[test]

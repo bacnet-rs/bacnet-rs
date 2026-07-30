@@ -53,7 +53,7 @@ use bacnet_rs::{
         PropertyIdentifier, PropertyValue,
     },
     property::{DestinationValue, TimestampValue},
-    server::{AddressCache, BacnetIpServer},
+    server::{AddressCache, BacnetIpServer, NotificationTarget},
 };
 use serde::{Deserialize, Serialize};
 
@@ -323,8 +323,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "unconfirmed"
                     },
                 );
+                // A COV subscriber is always one device: it gave its address when
+                // it subscribed.
                 if let Err(error) = notifier.send_cov_notification(
-                    addressed.address,
+                    NotificationTarget::Unicast(addressed.address),
                     &addressed.notification,
                     addressed.confirmed,
                 ) {
@@ -341,9 +343,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let confirmed = addressed.destination.issue_confirmed_notifications;
 
                 match engine_addresses.resolve(&addressed.destination.recipient) {
-                    Some(address) => {
+                    Some(target) => {
                         println!(
-                            "event: {:?} {:?} -> {:?} (priority {}, ack {}) -> {address} pid {} {}",
+                            "event: {:?} {:?} -> {:?} (priority {}, ack {}) -> {target} pid {} {}",
                             notification.event_object,
                             notification.from_state,
                             notification.to_state,
@@ -357,7 +359,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             },
                         );
                         if let Err(error) =
-                            notifier.send_event_notification(address, notification, confirmed)
+                            notifier.send_event_notification(target, notification, confirmed)
                         {
                             eprintln!("failed to send notification: {error}");
                         }

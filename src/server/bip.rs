@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-use super::{ObjectService, ServerDispatcher, ServerError, ServerResponse};
+use super::{NotificationTarget, ObjectService, ServerDispatcher, ServerError, ServerResponse};
 
 #[cfg(feature = "async")]
 use tokio::task::JoinSet;
@@ -101,9 +101,19 @@ impl BacnetIpServer {
     }
 
     /// A handle for originating event notifications from this device.
+    ///
+    /// Broadcast notifications go to 255.255.255.255 on the port this server is
+    /// bound to; use [`Notifier::with_broadcast_address`] to direct them at a
+    /// subnet instead.
     pub fn notifier(&self) -> Result<Notifier, ServerError> {
+        let socket = self.socket.try_clone()?;
+        // A broadcast recipient needs this; a device that never has one is
+        // unaffected by it being set.
+        socket.set_broadcast(true)?;
+        let port = socket.local_addr()?.port();
         Ok(Notifier {
-            socket: self.socket.try_clone()?,
+            socket,
+            broadcast_address: SocketAddr::from((Ipv4Addr::BROADCAST, port)),
             invoke_id: std::sync::atomic::AtomicU8::new(1),
         })
     }
@@ -393,10 +403,33 @@ fn decode_bacnet_ip_frame(data: &[u8]) -> Option<(Npdu, &[u8], Option<SocketAddr
 /// blocked in `recv_from`.
 pub struct Notifier {
     socket: UdpSocket,
+    broadcast_address: SocketAddr,
     invoke_id: std::sync::atomic::AtomicU8,
 }
 
 impl Notifier {
+    /// Send broadcasts to `address` rather than 255.255.255.255.
+    ///
+    /// A directed subnet broadcast is often what a routed network wants, and is
+    /// what gets through when a host or switch drops the limited broadcast.
+    pub fn with_broadcast_address(mut self, address: SocketAddr) -> Self {
+        self.broadcast_address = address;
+        self
+    }
+
+    /// Where a target is sent, and which BVLC function carries it.
+    ///
+    /// A broadcast is not merely a different address: it has to go out as
+    /// Original-Broadcast-NPDU, or receivers will treat it as addressed to them
+    /// alone.
+    fn route(&self, target: NotificationTarget) -> (SocketAddr, BvlcFunction) {
+        match target {
+            NotificationTarget::Unicast(address) => (address, BvlcFunction::OriginalUnicastNpdu),
+            NotificationTarget::Broadcast => {
+                (self.broadcast_address, BvlcFunction::OriginalBroadcastNpdu)
+            }
+        }
+    }
     /// Send an event notification to `destination`.
     ///
     /// `confirmed` follows the recipient's `issue_confirmed_notifications` flag: a
@@ -409,7 +442,7 @@ impl Notifier {
     /// would race it; unacknowledged notifications are not retried yet.
     pub fn send_event_notification(
         &self,
-        destination: SocketAddr,
+        destination: NotificationTarget,
         notification: &EventNotification,
         confirmed: bool,
     ) -> Result<(), ServerError> {
@@ -447,8 +480,9 @@ impl Notifier {
             Npdu::new().encode()
         };
 
-        let frame = wrap_bvlc_parts(BvlcFunction::OriginalUnicastNpdu, &[&npdu, &apdu.encode()]);
-        self.socket.send_to(&frame, destination)?;
+        let (address, function) = self.route(destination);
+        let frame = wrap_bvlc_parts(function, &[&npdu, &apdu.encode()]);
+        self.socket.send_to(&frame, address)?;
         Ok(())
     }
 
@@ -458,7 +492,7 @@ impl Notifier {
     /// subscriber said which it wanted when it subscribed.
     pub fn send_cov_notification(
         &self,
-        destination: SocketAddr,
+        destination: NotificationTarget,
         notification: &CovNotification,
         confirmed: bool,
     ) -> Result<(), ServerError> {
@@ -495,8 +529,9 @@ impl Notifier {
             Npdu::new().encode()
         };
 
-        let frame = wrap_bvlc_parts(BvlcFunction::OriginalUnicastNpdu, &[&npdu, &apdu.encode()]);
-        self.socket.send_to(&frame, destination)?;
+        let (address, function) = self.route(destination);
+        let frame = wrap_bvlc_parts(function, &[&npdu, &apdu.encode()]);
+        self.socket.send_to(&frame, address)?;
         Ok(())
     }
 
@@ -537,6 +572,45 @@ mod tests {
     };
 
     use super::*;
+
+    /// A broadcast recipient has to go out as Original-Broadcast-NPDU, not as a
+    /// unicast to a broadcast address: a receiver reads the BVLC function to tell
+    /// whether a message was addressed to it alone.
+    #[test]
+    fn a_broadcast_notification_uses_the_broadcast_bvlc_function() {
+        let database = Arc::new(ObjectDatabase::new(Device::new(1234, "Test".to_string())));
+        let server = BacnetIpServer::bind("127.0.0.1:0", database).expect("bind");
+
+        // Point broadcasts at a loopback socket so the frame can be inspected.
+        let receiver = UdpSocket::bind("127.0.0.1:0").expect("bind receiver");
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("timeout");
+        let notifier = server
+            .notifier()
+            .expect("notifier")
+            .with_broadcast_address(receiver.local_addr().expect("addr"));
+
+        let notification = CovNotification {
+            subscriber_process_identifier: 0,
+            initiating_device: ObjectIdentifier::new(ObjectType::Device, 1234),
+            monitored_object: ObjectIdentifier::new(ObjectType::AnalogValue, 1),
+            time_remaining: 0,
+            list_of_values: vec![crate::service::cov_notification::CovPropertyValue::new(
+                PropertyIdentifier::PresentValue,
+                PropertyValue::Real(21.5),
+            )],
+        };
+        notifier
+            .send_cov_notification(NotificationTarget::Broadcast, &notification, false)
+            .expect("send");
+
+        let mut frame = [0u8; MAX_BACNET_IP_FRAME];
+        let (length, _) = receiver.recv_from(&mut frame).expect("receive");
+        let header = BvlcHeader::decode(&frame[..length]).expect("decode BVLC");
+
+        assert_eq!(header.function, BvlcFunction::OriginalBroadcastNpdu);
+    }
 
     #[test]
     fn hosted_analog_value_can_be_discovered_read_and_written() {
