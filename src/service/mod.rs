@@ -724,18 +724,15 @@ impl ReadPropertyResponse {
         let (tag, _, consumed) = decode_tag(&data[pos..])?;
         pos += consumed;
 
+        // Read through to the closing tag and decode by property, rather than
+        // taking application-tagged values until something else turns up: a
+        // property whose value is a constructed type -- Active_COV_Subscriptions,
+        // Recipient_List, a weekly schedule -- carries no application tag at all,
+        // and the older loop read it as no values followed by a stray tag.
         let property_values = if let BACnetTag::Context(3) = tag {
-            let (tag, _, _) = decode_tag(&data[pos..])?;
-            let mut current_tag = tag;
-            let mut values = Vec::new();
-
-            while let BACnetTag::Application(_) = current_tag {
-                let (value, consumed) = decode_property_value(&data[pos..])?;
-                values.push(value);
-                pos += consumed;
-                let (tag, _, _) = decode_tag(&data[pos..])?;
-                current_tag = tag;
-            }
+            let value_end = find_constructed_value_end(data, pos, 3)?;
+            let values = decode_values_for(property_identifier.into(), &data[pos..value_end])?;
+            pos = value_end;
             values
         } else {
             return Err(EncodingError::InvalidTag);
@@ -980,6 +977,70 @@ fn find_constructed_value_end(
     }
 
     Err(EncodingError::InvalidTag)
+}
+
+/// Decode the values of a property, given which property they belong to.
+///
+/// Application tags alone cannot describe BACnet's constructed datatypes: a
+/// `BACnetCOVSubscription` is a sequence of context-tagged fields rather than a
+/// value carrying a tag of its own, and nothing in the encoding says which
+/// sequence it is. The property identifier is what says how to read it.
+///
+/// Every complex form falls back to the generic reader, so a device that encodes
+/// one differently than expected still yields whatever does parse instead of
+/// failing the whole read.
+fn decode_values_for(
+    property: PropertyIdentifier,
+    encoded: &[u8],
+) -> EncodingResult<Vec<PropertyValue>> {
+    let values = if property == PropertyIdentifier::ActiveCovSubscriptions {
+        crate::property::complex::decode_cov_subscriptions(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else if property == PropertyIdentifier::DeviceAddressBinding {
+        crate::property::complex::decode_address_bindings(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else if matches!(
+        property,
+        PropertyIdentifier::EventTimeStamps
+            | PropertyIdentifier::CommandTimeArray
+            | PropertyIdentifier::LastCommandTime
+    ) {
+        crate::property::complex::decode_timestamps(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else if matches!(
+        property,
+        PropertyIdentifier::ListOfObjectPropertyReferences
+            | PropertyIdentifier::EventAlgorithmInhibitRef
+            | PropertyIdentifier::ObjectPropertyReference
+    ) {
+        crate::property::complex::decode_object_property_references(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else if property == PropertyIdentifier::RecipientList {
+        crate::property::complex::decode_destinations(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else if property == PropertyIdentifier::WeeklySchedule {
+        crate::property::complex::decode_weekly_schedule(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else if property == PropertyIdentifier::DateList {
+        crate::property::complex::decode_date_list(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else if property == PropertyIdentifier::ExceptionSchedule {
+        crate::property::complex::decode_exception_schedule(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else if property == PropertyIdentifier::EffectivePeriod {
+        crate::property::complex::decode_date_range(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else if matches!(
+        property,
+        PropertyIdentifier::ValueSource | PropertyIdentifier::ValueSourceArray
+    ) {
+        crate::property::complex::decode_value_sources(encoded)
+            .or_else(|_| decode_property_result_values(encoded))?
+    } else {
+        decode_property_result_values(encoded)?
+    };
+
+    Ok(values)
 }
 
 fn decode_property_result_values(data: &[u8]) -> EncodingResult<Vec<PropertyValue>> {
@@ -1397,43 +1458,7 @@ impl PropertyResult {
         let value = if let BACnetTag::Context(4) = tag {
             let value_end = find_constructed_value_end(bytes, total_consumed, 4)?;
             let encoded_values = &bytes[total_consumed..value_end];
-            let values = if property_identifier == PropertyIdentifier::ActiveCovSubscriptions {
-                crate::property::complex::decode_cov_subscriptions(encoded_values)
-                    .or_else(|_| decode_property_result_values(encoded_values))?
-            } else if property_identifier == PropertyIdentifier::DeviceAddressBinding {
-                crate::property::complex::decode_address_bindings(encoded_values)
-                    .or_else(|_| decode_property_result_values(encoded_values))?
-            } else if matches!(
-                property_identifier,
-                PropertyIdentifier::EventTimeStamps
-                    | PropertyIdentifier::CommandTimeArray
-                    | PropertyIdentifier::LastCommandTime
-            ) {
-                crate::property::complex::decode_timestamps(encoded_values)
-                    .or_else(|_| decode_property_result_values(encoded_values))?
-            } else if matches!(
-                property_identifier,
-                PropertyIdentifier::ListOfObjectPropertyReferences
-                    | PropertyIdentifier::EventAlgorithmInhibitRef
-                    | PropertyIdentifier::ObjectPropertyReference
-            ) {
-                crate::property::complex::decode_object_property_references(encoded_values)
-                    .or_else(|_| decode_property_result_values(encoded_values))?
-            } else if property_identifier == PropertyIdentifier::RecipientList {
-                crate::property::complex::decode_destinations(encoded_values)
-                    .or_else(|_| decode_property_result_values(encoded_values))?
-            } else if property_identifier == PropertyIdentifier::WeeklySchedule {
-                crate::property::complex::decode_weekly_schedule(encoded_values)
-                    .or_else(|_| decode_property_result_values(encoded_values))?
-            } else if matches!(
-                property_identifier,
-                PropertyIdentifier::ValueSource | PropertyIdentifier::ValueSourceArray
-            ) {
-                crate::property::complex::decode_value_sources(encoded_values)
-                    .or_else(|_| decode_property_result_values(encoded_values))?
-            } else {
-                decode_property_result_values(encoded_values)?
-            };
+            let values = decode_values_for(property_identifier, encoded_values)?;
             total_consumed = value_end;
             PropertyResultValue::Value(values)
         } else if let BACnetTag::Context(5) = tag {
@@ -2456,6 +2481,9 @@ impl UtcTimeSynchronizationRequest {
 mod tests {
     use super::*;
     use crate::object::{ObjectIdentifier, ObjectType};
+    use crate::property::{
+        BacnetAddress, CovSubscriptionValue, ObjectPropertyReference, Recipient, RecipientProcess,
+    };
 
     #[test]
     fn test_whois_request() {
@@ -2711,6 +2739,67 @@ mod tests {
         assert_eq!(
             decoded.read_access_results[0].results[1].value,
             PropertyResultValue::Value(vec![PropertyValue::Unsigned(710)])
+        );
+    }
+
+    /// ReadPropertyMultiple already read constructed values; plain ReadProperty
+    /// took application-tagged values until something else turned up, which for a
+    /// property that is entirely context-tagged is nothing at all -- so the
+    /// closing tag it then found was the sequence's own first tag, and the whole
+    /// read failed. A client asking for one property got less than one asking for
+    /// several.
+    #[test]
+    fn a_read_property_response_decodes_a_constructed_value() {
+        let subscription = CovSubscriptionValue {
+            recipient: RecipientProcess {
+                recipient: Recipient::Address(BacnetAddress {
+                    network: 0,
+                    mac_address: vec![192, 168, 6, 1, 0xBA, 0xC0],
+                }),
+                process_identifier: 777,
+            },
+            monitored_property: ObjectPropertyReference {
+                object_identifier: ObjectIdentifier::new(ObjectType::AnalogValue, 1),
+                property_identifier: PropertyIdentifier::PresentValue,
+                array_index: None,
+            },
+            issue_confirmed_notifications: false,
+            time_remaining: 240,
+            cov_increment: Some(0.5),
+        };
+        let response = ReadPropertyResponse::new(
+            ObjectIdentifier::new(ObjectType::Device, 1234),
+            PropertyIdentifier::ActiveCovSubscriptions,
+            vec![PropertyValue::CovSubscription(subscription.clone())],
+        );
+
+        let mut encoded = Vec::new();
+        response.encode(&mut encoded).unwrap();
+        let decoded = ReadPropertyResponse::decode(&encoded).unwrap();
+
+        assert_eq!(
+            decoded.property_values,
+            vec![PropertyValue::CovSubscription(subscription)]
+        );
+    }
+
+    /// The ordinary case, which the same path now serves.
+    #[test]
+    fn a_read_property_response_still_decodes_application_tagged_values() {
+        let response = ReadPropertyResponse::new(
+            ObjectIdentifier::new(ObjectType::AnalogValue, 1),
+            PropertyIdentifier::PresentValue,
+            vec![PropertyValue::Real(21.5)],
+        );
+
+        let mut encoded = Vec::new();
+        response.encode(&mut encoded).unwrap();
+
+        assert_eq!(
+            ReadPropertyResponse::decode(&encoded)
+                .unwrap()
+                .property_values,
+            vec![PropertyValue::Real(21.5)]
         );
     }
 

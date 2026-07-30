@@ -116,6 +116,9 @@ pub mod cov;
 #[cfg(feature = "std")]
 pub mod event;
 pub mod object;
+/// Schedule engine driving Schedule and Calendar objects
+#[cfg(feature = "std")]
+pub mod schedule;
 
 /// BACnet service definitions for confirmed and unconfirmed operations
 pub mod service;

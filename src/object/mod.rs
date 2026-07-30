@@ -297,6 +297,19 @@ pub trait BacnetObject: Send + Sync {
     /// Commit a confirmed transition, updating Event_State and Status_Flags.
     fn apply_event_state(&mut self, _state: EventState) {}
 
+    /// The object as a Schedule, for the schedule engine to evaluate and drive.
+    ///
+    /// Objects that are not schedules keep the default `None`, and the engine
+    /// passes over them.
+    fn schedule_mut(&mut self) -> Option<&mut schedule::Schedule> {
+        None
+    }
+
+    /// The object as a Calendar, so the engine can refresh its Present_Value.
+    fn calendar_mut(&mut self) -> Option<&mut calendar::Calendar> {
+        None
+    }
+
     /// Set the value this object reflects from whatever drives it.
     ///
     /// This is the hosting application's path, not the network's, and it
@@ -844,6 +857,8 @@ pub struct AddressBinding {
 pub mod analog;
 /// Binary object types (BI, BO, BV)
 pub mod binary;
+/// Calendar object type
+pub mod calendar;
 /// Object database for managing BACnet objects
 #[cfg(feature = "std")]
 pub mod database;
@@ -859,6 +874,8 @@ pub mod intrinsic;
 pub mod multistate;
 /// Notification Class object type
 pub mod notification_class;
+/// Schedule object type
+pub mod schedule;
 
 pub mod event_state;
 pub mod object_type;
@@ -869,6 +886,7 @@ pub use property_identifier::PropertyIdentifier;
 
 pub use analog::{AnalogInput, AnalogOutput, AnalogValue};
 pub use binary::{BinaryInput, BinaryOutput, BinaryPV, BinaryValue, Polarity};
+pub use calendar::Calendar;
 pub use device::{DeviceObject, ObjectFunctions};
 pub use engineering_units::EngineeringUnits;
 pub use event_state::EventState;
@@ -879,6 +897,7 @@ pub use intrinsic::{
 pub use multistate::{MultiStateInput, MultiStateOutput, MultiStateValue};
 pub use notification_class::NotificationClass;
 pub use reliability::Reliability;
+pub use schedule::Schedule;
 
 #[cfg(feature = "std")]
 pub use database::{DatabaseBuilder, DatabaseStatistics, ObjectDatabase};

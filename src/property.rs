@@ -27,9 +27,11 @@ use crate::{
 
 pub mod complex;
 pub use complex::{
-    AddressBindingValue, BacnetAddress, CovSubscriptionValue, DailyScheduleValue, DestinationValue,
-    ObjectPropertyReference, Recipient, RecipientProcess, TimeValueValue, TimestampValue,
-    ValueSourceValue,
+    AddressBindingValue, BacnetAddress, CalendarEntryValue, CovSubscriptionValue,
+    DailyScheduleValue, DateRangeValue, DestinationValue, ObjectPropertyReference, Recipient,
+    RecipientProcess, SpecialEventPeriod, SpecialEventValue, TimeValueValue, TimestampValue,
+    ValueSourceValue, WeekNDayValue, ANY, EVEN_DAYS, EVEN_MONTHS, LAST_DAY_OF_MONTH,
+    LAST_WEEK_OF_MONTH, ODD_DAYS, ODD_MONTHS, UNSPECIFIED_YEAR,
 };
 
 /// Decoded BACnet property value
@@ -76,6 +78,12 @@ pub enum PropertyValue {
     Destination(DestinationValue),
     /// BACnetDailySchedule composite value.
     DailySchedule(DailyScheduleValue),
+    /// BACnetCalendarEntry choice.
+    CalendarEntry(CalendarEntryValue),
+    /// BACnetSpecialEvent composite value.
+    SpecialEvent(SpecialEventValue),
+    /// BACnetDateRange composite value.
+    DateRange(DateRangeValue),
     /// BACnetValueSource choice.
     ValueSource(ValueSourceValue),
     /// Null value
@@ -122,6 +130,9 @@ impl PropertyValue {
             PropertyValue::ObjectPropertyReference(value) => format!("{value:?}"),
             PropertyValue::Destination(value) => format!("{value:?}"),
             PropertyValue::DailySchedule(value) => format!("{value:?}"),
+            PropertyValue::CalendarEntry(value) => format!("{value:?}"),
+            PropertyValue::SpecialEvent(value) => format!("{value:?}"),
+            PropertyValue::DateRange(value) => format!("{value:?}"),
             PropertyValue::ValueSource(value) => format!("{value:?}"),
             PropertyValue::Null => "Null".to_string(),
             PropertyValue::Unknown(_) => "Unknown".to_string(),
@@ -278,6 +289,9 @@ pub fn encode_property_value(
         PropertyValue::ObjectPropertyReference(value) => value.encode(buffer)?,
         PropertyValue::Destination(value) => value.encode(buffer)?,
         PropertyValue::DailySchedule(value) => value.encode(buffer)?,
+        PropertyValue::CalendarEntry(value) => value.encode(buffer)?,
+        PropertyValue::SpecialEvent(value) => value.encode(buffer)?,
+        PropertyValue::DateRange(value) => value.encode(buffer)?,
         PropertyValue::ValueSource(value) => value.encode(buffer)?,
         PropertyValue::Null => encode_application_tag(buffer, ApplicationTag::Null, 0),
         PropertyValue::Unknown(data) => buffer.extend_from_slice(data),

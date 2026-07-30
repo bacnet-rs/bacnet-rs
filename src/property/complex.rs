@@ -10,14 +10,31 @@ use crate::{
     encoding::{
         advanced::bitstring::encode_bit_string,
         advanced::context::{encode_closing_tag, encode_opening_tag},
-        decode_context_object_id, decode_context_tag, decode_context_unsigned, encode_boolean,
-        encode_context_enumerated, encode_context_object_id, encode_context_tag,
+        decode_context_object_id, decode_context_tag, decode_context_unsigned, decode_date,
+        encode_boolean, encode_context_enumerated, encode_context_object_id, encode_context_tag,
         encode_context_unsigned, encode_date, encode_object_identifier, encode_octet_string,
         encode_time, encode_unsigned, EncodingError, Result as EncodingResult,
     },
     object::{ObjectIdentifier, PropertyIdentifier},
     property::{decode_property_value, PropertyValue},
 };
+
+/// Wildcard for any octet-sized field of a BACnet date or WeekNDay.
+pub const ANY: u8 = 255;
+/// Unspecified year, encoded as the same 255 octet as [`ANY`].
+pub const UNSPECIFIED_YEAR: u16 = 255;
+/// Date or WeekNDay month matching every odd-numbered month.
+pub const ODD_MONTHS: u8 = 13;
+/// Date or WeekNDay month matching every even-numbered month.
+pub const EVEN_MONTHS: u8 = 14;
+/// Date day matching whichever day ends the month.
+pub const LAST_DAY_OF_MONTH: u8 = 32;
+/// Date day matching every odd-numbered day.
+pub const ODD_DAYS: u8 = 33;
+/// Date day matching every even-numbered day.
+pub const EVEN_DAYS: u8 = 34;
+/// WeekNDay week matching the final seven days of the month.
+pub const LAST_WEEK_OF_MONTH: u8 = 6;
 
 /// BACnet address used by constructed application values.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -88,6 +105,62 @@ pub struct DailyScheduleValue {
     pub time_values: Vec<TimeValueValue>,
 }
 
+/// BACnetDateRange: an inclusive span between two dates.
+///
+/// An endpoint with an unspecified year leaves that side open, which is how
+/// Effective_Period says "always in effect".
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DateRangeValue {
+    pub start: (u16, u8, u8, u8),
+    pub end: (u16, u8, u8, u8),
+}
+
+/// BACnetWeekNDay: a recurring month, week-of-month and weekday pattern.
+///
+/// `month` is 1-12, [`ODD_MONTHS`] or [`EVEN_MONTHS`]; `week_of_month` is 1-5
+/// for the successive seven-day blocks or [`LAST_WEEK_OF_MONTH`];
+/// `day_of_week` is 1 (Monday) through 7 (Sunday). [`ANY`] wildcards a field.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeekNDayValue {
+    pub month: u8,
+    pub week_of_month: u8,
+    pub day_of_week: u8,
+}
+
+/// BACnetCalendarEntry choice.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalendarEntryValue {
+    /// `date [0]`, honouring the BACnet date wildcards.
+    Date(u16, u8, u8, u8),
+    /// `dateRange [1]`.
+    DateRange(DateRangeValue),
+    /// `weekNDay [2]`.
+    WeekNDay(WeekNDayValue),
+}
+
+/// The period a BACnetSpecialEvent applies to.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecialEventPeriod {
+    /// `calendarEntry [0]`, written inline in the schedule.
+    CalendarEntry(CalendarEntryValue),
+    /// `calendarReference [1]`, naming a Calendar object to consult instead.
+    CalendarReference(ObjectIdentifier),
+}
+
+/// One BACnetSpecialEvent in an Exception_Schedule.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpecialEventValue {
+    pub period: SpecialEventPeriod,
+    pub time_values: Vec<TimeValueValue>,
+    /// 1-16; the lowest number wins when two events cover the same day.
+    pub priority: u32,
+}
+
 /// BACnetValueSource choice. Unknown future choices remain raw values.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,32 +188,159 @@ impl ValueSourceValue {
 impl DailyScheduleValue {
     pub fn encode(&self, out: &mut Vec<u8>) -> EncodingResult<()> {
         encode_opening_tag(out, 0)?;
-        for value in &self.time_values {
-            encode_time(out, value.time.0, value.time.1, value.time.2, value.time.3)?;
-            crate::property::encode_property_value(&value.value, out)?;
-        }
+        encode_time_values(out, &self.time_values)?;
         encode_closing_tag(out, 0)?;
         Ok(())
     }
 
     pub fn decode(data: &[u8]) -> EncodingResult<(Self, usize)> {
-        let mut p = expect_constructed_tag(data, 0, 6)?;
-        let mut time_values = Vec::new();
-        while !context_tag_matches(&data[p..], 0, Some(7)) {
-            let (time, n) = decode_property_value(&data[p..])?;
-            p += n;
-            let PropertyValue::Time(h, m, s, hs) = time else {
-                return Err(EncodingError::InvalidTag);
-            };
-            let (value, n) = decode_property_value(&data[p..])?;
-            p += n;
-            time_values.push(TimeValueValue {
-                time: (h, m, s, hs),
-                value: Box::new(value),
-            });
+        let mut consumed = expect_constructed_tag(data, 0, 6)?;
+        let (time_values, length) = decode_time_values(&data[consumed..], 0)?;
+        consumed += length;
+        consumed += expect_constructed_tag(&data[consumed..], 0, 7)?;
+        Ok((Self { time_values }, consumed))
+    }
+}
+
+impl DateRangeValue {
+    pub fn encode(&self, out: &mut Vec<u8>) -> EncodingResult<()> {
+        encode_date(out, self.start.0, self.start.1, self.start.2, self.start.3)?;
+        encode_date(out, self.end.0, self.end.1, self.end.2, self.end.3)
+    }
+
+    pub fn decode(data: &[u8]) -> EncodingResult<(Self, usize)> {
+        let (start, mut consumed) = decode_date(data)?;
+        let (end, length) = decode_date(&data[consumed..])?;
+        consumed += length;
+        Ok((Self { start, end }, consumed))
+    }
+
+    /// Whether `date` falls inside the range. An endpoint whose year, month or
+    /// day is unspecified leaves that side of the range open.
+    pub fn contains(&self, date: (u16, u8, u8, u8)) -> bool {
+        let Some(day) = calendar_ordinal(date) else {
+            return false;
+        };
+        calendar_ordinal(self.start).is_none_or(|start| start <= day)
+            && calendar_ordinal(self.end).is_none_or(|end| day <= end)
+    }
+}
+
+impl CalendarEntryValue {
+    pub fn encode(&self, out: &mut Vec<u8>) -> EncodingResult<()> {
+        match self {
+            Self::Date(year, month, day, weekday) => {
+                encode_context_date(out, 0, (*year, *month, *day, *weekday))
+            }
+            Self::DateRange(range) => {
+                encode_opening_tag(out, 1)?;
+                range.encode(out)?;
+                encode_closing_tag(out, 1)
+            }
+            Self::WeekNDay(week) => {
+                encode_context_tag(out, 2, 3)?;
+                out.extend_from_slice(&[week.month, week.week_of_month, week.day_of_week]);
+                Ok(())
+            }
         }
-        p += expect_constructed_tag(&data[p..], 0, 7)?;
-        Ok((Self { time_values }, p))
+    }
+
+    pub fn decode(data: &[u8]) -> EncodingResult<(Self, usize)> {
+        let (tag, kind, header) = decode_context_tag(data)?;
+        match (tag, kind) {
+            (0, 4) => {
+                let ((year, month, day, weekday), consumed) = decode_context_date(data, 0)?;
+                Ok((Self::Date(year, month, day, weekday), consumed))
+            }
+            (1, 6) => {
+                let (range, length) = DateRangeValue::decode(&data[header..])?;
+                let mut consumed = header + length;
+                consumed += expect_constructed_tag(&data[consumed..], 1, 7)?;
+                Ok((Self::DateRange(range), consumed))
+            }
+            (2, 3) => {
+                let week = data
+                    .get(header..header + 3)
+                    .ok_or(EncodingError::BufferUnderflow)?;
+                Ok((
+                    Self::WeekNDay(WeekNDayValue {
+                        month: week[0],
+                        week_of_month: week[1],
+                        day_of_week: week[2],
+                    }),
+                    header + 3,
+                ))
+            }
+            _ => Err(EncodingError::InvalidTag),
+        }
+    }
+
+    /// Whether this entry covers `date`, given as (year, month, day, weekday)
+    /// with weekday 1 for Monday.
+    pub fn matches(&self, date: (u16, u8, u8, u8)) -> bool {
+        match self {
+            Self::Date(year, month, day, weekday) => {
+                date_pattern_matches((*year, *month, *day, *weekday), date)
+            }
+            Self::DateRange(range) => range.contains(date),
+            Self::WeekNDay(week) => week_n_day_matches(week, date),
+        }
+    }
+}
+
+impl SpecialEventValue {
+    pub fn encode(&self, out: &mut Vec<u8>) -> EncodingResult<()> {
+        match &self.period {
+            SpecialEventPeriod::CalendarEntry(entry) => {
+                encode_opening_tag(out, 0)?;
+                entry.encode(out)?;
+                encode_closing_tag(out, 0)?;
+            }
+            // A primitive context tag, not a constructed one: this alternative
+            // of the CHOICE is a bare object identifier.
+            SpecialEventPeriod::CalendarReference(calendar) => {
+                out.extend_from_slice(&encode_context_object_id(*calendar, 1)?);
+            }
+        }
+        encode_opening_tag(out, 2)?;
+        encode_time_values(out, &self.time_values)?;
+        encode_closing_tag(out, 2)?;
+        out.extend_from_slice(&encode_context_unsigned(self.priority, 3)?);
+        Ok(())
+    }
+
+    pub fn decode(data: &[u8]) -> EncodingResult<(Self, usize)> {
+        let (tag, kind, header) = decode_context_tag(data)?;
+        let (period, mut consumed) = match (tag, kind) {
+            (0, 6) => {
+                let (entry, length) = CalendarEntryValue::decode(&data[header..])?;
+                let mut consumed = header + length;
+                consumed += expect_constructed_tag(&data[consumed..], 0, 7)?;
+                (SpecialEventPeriod::CalendarEntry(entry), consumed)
+            }
+            (1, 4) => {
+                let (calendar, consumed) = decode_context_object_id(data, 1)?;
+                (SpecialEventPeriod::CalendarReference(calendar), consumed)
+            }
+            _ => return Err(EncodingError::InvalidTag),
+        };
+
+        consumed += expect_constructed_tag(&data[consumed..], 2, 6)?;
+        let (time_values, length) = decode_time_values(&data[consumed..], 2)?;
+        consumed += length;
+        consumed += expect_constructed_tag(&data[consumed..], 2, 7)?;
+
+        let (priority, length) = decode_context_unsigned(&data[consumed..], 3)?;
+        consumed += length;
+
+        Ok((
+            Self {
+                period,
+                time_values,
+                priority,
+            },
+            consumed,
+        ))
     }
 }
 
@@ -474,6 +674,33 @@ pub(crate) fn decode_weekly_schedule(data: &[u8]) -> EncodingResult<Vec<Property
     Ok(values)
 }
 
+pub(crate) fn decode_date_list(data: &[u8]) -> EncodingResult<Vec<PropertyValue>> {
+    let mut values = Vec::new();
+    let mut consumed = 0;
+    while consumed < data.len() {
+        let (value, length) = CalendarEntryValue::decode(&data[consumed..])?;
+        consumed += length;
+        values.push(PropertyValue::CalendarEntry(value));
+    }
+    Ok(values)
+}
+
+pub(crate) fn decode_exception_schedule(data: &[u8]) -> EncodingResult<Vec<PropertyValue>> {
+    let mut values = Vec::new();
+    let mut consumed = 0;
+    while consumed < data.len() {
+        let (value, length) = SpecialEventValue::decode(&data[consumed..])?;
+        consumed += length;
+        values.push(PropertyValue::SpecialEvent(value));
+    }
+    Ok(values)
+}
+
+pub(crate) fn decode_date_range(data: &[u8]) -> EncodingResult<Vec<PropertyValue>> {
+    let (value, _) = DateRangeValue::decode(data)?;
+    Ok(vec![PropertyValue::DateRange(value)])
+}
+
 pub(crate) fn decode_value_sources(data: &[u8]) -> EncodingResult<Vec<PropertyValue>> {
     let mut values = Vec::new();
     let mut consumed = 0;
@@ -664,6 +891,138 @@ fn decode_context_real(data: &[u8], tag: u8) -> EncodingResult<(f32, usize)> {
         f32::from_be_bytes(data[header..header + 4].try_into().unwrap()),
         header + 4,
     ))
+}
+
+fn encode_time_values(out: &mut Vec<u8>, values: &[TimeValueValue]) -> EncodingResult<()> {
+    for value in values {
+        encode_time(out, value.time.0, value.time.1, value.time.2, value.time.3)?;
+        crate::property::encode_property_value(&value.value, out)?;
+    }
+    Ok(())
+}
+
+/// Decode time/value pairs up to the closing tag `tag`, consuming the pairs but
+/// not the closing tag itself.
+fn decode_time_values(data: &[u8], tag: u8) -> EncodingResult<(Vec<TimeValueValue>, usize)> {
+    let mut time_values = Vec::new();
+    let mut consumed = 0;
+    while !context_tag_matches(&data[consumed..], tag, Some(7)) {
+        let (time, length) = decode_property_value(&data[consumed..])?;
+        consumed += length;
+        let PropertyValue::Time(hour, minute, second, hundredths) = time else {
+            return Err(EncodingError::InvalidTag);
+        };
+        let (value, length) = decode_property_value(&data[consumed..])?;
+        consumed += length;
+        time_values.push(TimeValueValue {
+            time: (hour, minute, second, hundredths),
+            value: Box::new(value),
+        });
+    }
+    Ok((time_values, consumed))
+}
+
+/// Encode a context-tagged Date, which stores the year as `year - 1900` in a
+/// single octet rather than as the application form's full year.
+fn encode_context_date(out: &mut Vec<u8>, tag: u8, date: (u16, u8, u8, u8)) -> EncodingResult<()> {
+    let (year, month, day, weekday) = date;
+    let year = if year == UNSPECIFIED_YEAR {
+        ANY
+    } else {
+        year.checked_sub(1900)
+            .and_then(|offset| u8::try_from(offset).ok())
+            .ok_or(EncodingError::ValueOutOfRange)?
+    };
+    encode_context_tag(out, tag, 4)?;
+    out.extend_from_slice(&[year, month, day, weekday]);
+    Ok(())
+}
+
+fn decode_context_date(data: &[u8], tag: u8) -> EncodingResult<((u16, u8, u8, u8), usize)> {
+    let (actual_tag, length, header) = decode_context_tag(data)?;
+    if actual_tag != tag || length != 4 {
+        return Err(EncodingError::InvalidTag);
+    }
+    let date = data
+        .get(header..header + 4)
+        .ok_or(EncodingError::BufferUnderflow)?;
+    let year = if date[0] == ANY {
+        UNSPECIFIED_YEAR
+    } else {
+        1900 + u16::from(date[0])
+    };
+    Ok(((year, date[1], date[2], date[3]), header + 4))
+}
+
+/// A date as a comparable year/month/day, or `None` if any of the three is a
+/// wildcard and so cannot be ordered.
+fn calendar_ordinal(date: (u16, u8, u8, u8)) -> Option<(u16, u8, u8)> {
+    let (year, month, day, _) = date;
+    if year == UNSPECIFIED_YEAR || month == ANY || month > 12 || day == ANY || day > 31 {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn month_matches(pattern: u8, month: u8) -> bool {
+    match pattern {
+        ANY => true,
+        ODD_MONTHS => month % 2 == 1,
+        EVEN_MONTHS => month.is_multiple_of(2),
+        pattern => pattern == month,
+    }
+}
+
+fn date_pattern_matches(pattern: (u16, u8, u8, u8), date: (u16, u8, u8, u8)) -> bool {
+    let (year, month, day, weekday) = pattern;
+    let (actual_year, actual_month, actual_day, actual_weekday) = date;
+
+    let day_matches = match day {
+        ANY => true,
+        LAST_DAY_OF_MONTH => actual_day == days_in_month(actual_year, actual_month),
+        ODD_DAYS => actual_day % 2 == 1,
+        EVEN_DAYS => actual_day % 2 == 0,
+        day => day == actual_day,
+    };
+
+    (year == UNSPECIFIED_YEAR || year == actual_year)
+        && month_matches(month, actual_month)
+        && day_matches
+        && (weekday == ANY || weekday == actual_weekday)
+}
+
+fn week_n_day_matches(pattern: &WeekNDayValue, date: (u16, u8, u8, u8)) -> bool {
+    let (year, month, day, weekday) = date;
+
+    let week_matches = match pattern.week_of_month {
+        ANY => true,
+        // A wildcard or out-of-range day cannot be placed within the month, and
+        // `day + 7` below would overflow on the 255 that means "any day".
+        _ if !(1..=31).contains(&day) => false,
+        LAST_WEEK_OF_MONTH => day + 7 > days_in_month(year, month),
+        week => week == day.div_ceil(7),
+    };
+
+    month_matches(pattern.month, month)
+        && week_matches
+        && (pattern.day_of_week == ANY || pattern.day_of_week == weekday)
+}
+
+/// Days in `month`, treating an unspecified year as a common year.
+fn days_in_month(year: u16, month: u8) -> u8 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn is_leap_year(year: u16) -> bool {
+    year != UNSPECIFIED_YEAR
+        && year.is_multiple_of(4)
+        && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
 fn expect_constructed_tag(data: &[u8], tag: u8, kind: usize) -> EncodingResult<usize> {
@@ -864,5 +1223,270 @@ mod tests {
         value.encode(&mut reencoded).unwrap();
         assert_eq!(consumed, 1);
         assert_eq!(reencoded, encoded);
+    }
+
+    fn time_value(hour: u8, minute: u8, value: PropertyValue) -> TimeValueValue {
+        TimeValueValue {
+            time: (hour, minute, 0, 0),
+            value: Box::new(value),
+        }
+    }
+
+    #[test]
+    fn calendar_entry_date_encodes_the_year_as_an_offset_from_1900() {
+        let entry = CalendarEntryValue::Date(2026, 12, 24, 4);
+
+        let mut encoded = Vec::new();
+        entry.encode(&mut encoded).unwrap();
+
+        assert_eq!(encoded, vec![0x0C, 0x7E, 0x0C, 0x18, 0x04]);
+        assert_eq!(
+            CalendarEntryValue::decode(&encoded).unwrap(),
+            (entry, encoded.len())
+        );
+    }
+
+    #[test]
+    fn calendar_entry_date_range_round_trips() {
+        let entry = CalendarEntryValue::DateRange(DateRangeValue {
+            start: (2026, 1, 1, 4),
+            end: (2026, 12, 31, 4),
+        });
+
+        let mut encoded = Vec::new();
+        entry.encode(&mut encoded).unwrap();
+
+        assert_eq!(
+            CalendarEntryValue::decode(&encoded).unwrap(),
+            (entry, encoded.len())
+        );
+    }
+
+    #[test]
+    fn calendar_entry_week_n_day_round_trips() {
+        let entry = CalendarEntryValue::WeekNDay(WeekNDayValue {
+            month: 1,
+            week_of_month: 1,
+            day_of_week: 7,
+        });
+
+        let mut encoded = Vec::new();
+        entry.encode(&mut encoded).unwrap();
+
+        assert_eq!(encoded, vec![0x2B, 0x01, 0x01, 0x07]);
+        assert_eq!(
+            CalendarEntryValue::decode(&encoded).unwrap(),
+            (entry, encoded.len())
+        );
+    }
+
+    #[test]
+    fn a_date_list_decodes_entries_of_mixed_kinds() {
+        let list = vec![
+            CalendarEntryValue::Date(2026, 5, 4, 1),
+            CalendarEntryValue::WeekNDay(WeekNDayValue {
+                month: ODD_MONTHS,
+                week_of_month: LAST_WEEK_OF_MONTH,
+                day_of_week: 1,
+            }),
+            CalendarEntryValue::DateRange(DateRangeValue {
+                start: (2026, 7, 1, ANY),
+                end: (2026, 7, 31, ANY),
+            }),
+        ];
+
+        let mut encoded = Vec::new();
+        for entry in &list {
+            entry.encode(&mut encoded).unwrap();
+        }
+
+        assert_eq!(
+            decode_date_list(&encoded).unwrap(),
+            list.into_iter()
+                .map(PropertyValue::CalendarEntry)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_special_event_with_an_inline_entry_round_trips() {
+        let event = SpecialEventValue {
+            period: SpecialEventPeriod::CalendarEntry(CalendarEntryValue::Date(2026, 12, 24, 4)),
+            time_values: vec![time_value(9, 30, PropertyValue::Enumerated(1))],
+            priority: 8,
+        };
+
+        let mut encoded = Vec::new();
+        event.encode(&mut encoded).unwrap();
+
+        assert_eq!(
+            encoded,
+            vec![
+                0x0E, 0x0C, 0x7E, 0x0C, 0x18, 0x04, 0x0F, 0x2E, 0xB4, 0x09, 0x1E, 0x00, 0x00, 0x91,
+                0x01, 0x2F, 0x39, 0x08,
+            ]
+        );
+        assert_eq!(
+            SpecialEventValue::decode(&encoded).unwrap(),
+            (event, encoded.len())
+        );
+    }
+
+    /// The calendarReference alternative is a primitive context tag holding the
+    /// object identifier, not a constructed one.
+    #[test]
+    fn a_special_event_referencing_a_calendar_uses_a_primitive_context_tag() {
+        let event = SpecialEventValue {
+            period: SpecialEventPeriod::CalendarReference(ObjectIdentifier::new(
+                ObjectType::Calendar,
+                3,
+            )),
+            time_values: vec![time_value(0, 0, PropertyValue::Real(1.0))],
+            priority: 16,
+        };
+
+        let mut encoded = Vec::new();
+        event.encode(&mut encoded).unwrap();
+
+        assert_eq!(encoded[..5], [0x1C, 0x01, 0x80, 0x00, 0x03]);
+        assert_eq!(
+            SpecialEventValue::decode(&encoded).unwrap(),
+            (event, encoded.len())
+        );
+    }
+
+    #[test]
+    fn an_exception_schedule_decodes_back_to_its_events() {
+        let events = vec![
+            SpecialEventValue {
+                period: SpecialEventPeriod::CalendarEntry(CalendarEntryValue::Date(
+                    2026, 12, 24, 4,
+                )),
+                time_values: vec![time_value(9, 30, PropertyValue::Real(18.0))],
+                priority: 8,
+            },
+            SpecialEventValue {
+                period: SpecialEventPeriod::CalendarReference(ObjectIdentifier::new(
+                    ObjectType::Calendar,
+                    1,
+                )),
+                time_values: Vec::new(),
+                priority: 16,
+            },
+        ];
+
+        let mut encoded = Vec::new();
+        for event in &events {
+            event.encode(&mut encoded).unwrap();
+        }
+
+        assert_eq!(
+            decode_exception_schedule(&encoded).unwrap(),
+            events
+                .into_iter()
+                .map(PropertyValue::SpecialEvent)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn an_effective_period_of_two_application_dates_round_trips() {
+        let range = DateRangeValue {
+            start: (2026, 1, 1, ANY),
+            end: (2026, 12, 31, ANY),
+        };
+
+        let mut encoded = Vec::new();
+        range.encode(&mut encoded).unwrap();
+
+        assert_eq!(
+            decode_date_range(&encoded).unwrap(),
+            vec![PropertyValue::DateRange(range)]
+        );
+    }
+
+    #[test]
+    fn an_open_ended_date_range_contains_everything() {
+        let always = DateRangeValue {
+            start: (UNSPECIFIED_YEAR, ANY, ANY, ANY),
+            end: (UNSPECIFIED_YEAR, ANY, ANY, ANY),
+        };
+
+        assert!(always.contains((2026, 7, 30, 4)));
+
+        let summer = DateRangeValue {
+            start: (2026, 6, 1, ANY),
+            end: (2026, 8, 31, ANY),
+        };
+        assert!(summer.contains((2026, 6, 1, 1)), "inclusive start");
+        assert!(summer.contains((2026, 8, 31, 1)), "inclusive end");
+        assert!(!summer.contains((2026, 5, 31, 1)));
+        assert!(!summer.contains((2027, 7, 1, 1)));
+    }
+
+    #[test]
+    fn a_wildcarded_date_matches_every_year() {
+        let christmas = CalendarEntryValue::Date(UNSPECIFIED_YEAR, 12, 24, ANY);
+
+        assert!(christmas.matches((2026, 12, 24, 4)));
+        assert!(christmas.matches((2027, 12, 24, 5)));
+        assert!(!christmas.matches((2026, 12, 25, 5)));
+    }
+
+    #[test]
+    fn the_last_day_of_month_wildcard_follows_the_calendar() {
+        let month_end = CalendarEntryValue::Date(UNSPECIFIED_YEAR, ANY, LAST_DAY_OF_MONTH, ANY);
+
+        assert!(month_end.matches((2026, 2, 28, 6)), "common February");
+        assert!(!month_end.matches((2026, 2, 27, 5)));
+        assert!(month_end.matches((2024, 2, 29, 4)), "leap February");
+        assert!(!month_end.matches((2024, 2, 28, 3)));
+        assert!(month_end.matches((2026, 4, 30, 4)));
+    }
+
+    #[test]
+    fn week_n_day_selects_a_weekday_within_a_seven_day_block() {
+        // The first Monday of every odd-numbered month.
+        let entry = CalendarEntryValue::WeekNDay(WeekNDayValue {
+            month: ODD_MONTHS,
+            week_of_month: 1,
+            day_of_week: 1,
+        });
+
+        assert!(entry.matches((2026, 1, 5, 1)), "5 January 2026, a Monday");
+        assert!(!entry.matches((2026, 1, 12, 1)), "second Monday");
+        assert!(!entry.matches((2026, 2, 2, 1)), "even month");
+        assert!(!entry.matches((2026, 1, 6, 2)), "wrong weekday");
+    }
+
+    /// A date with an unspecified day cannot be placed within a month, so no
+    /// WeekNDay pattern covers it. Before this was guarded, the last-week
+    /// arithmetic overflowed on the 255.
+    #[test]
+    fn a_wildcard_day_matches_no_week_n_day_pattern() {
+        for week_of_month in [1, 5, LAST_WEEK_OF_MONTH] {
+            let entry = CalendarEntryValue::WeekNDay(WeekNDayValue {
+                month: ANY,
+                week_of_month,
+                day_of_week: ANY,
+            });
+            assert!(!entry.matches((2026, 7, ANY, ANY)), "week {week_of_month}");
+            assert!(!entry.matches((2026, 7, 0, ANY)), "day zero");
+            assert!(!entry.matches((2026, 7, 32, ANY)), "day past the month");
+        }
+    }
+
+    #[test]
+    fn the_last_week_wildcard_covers_the_final_seven_days() {
+        let entry = CalendarEntryValue::WeekNDay(WeekNDayValue {
+            month: ANY,
+            week_of_month: LAST_WEEK_OF_MONTH,
+            day_of_week: ANY,
+        });
+
+        assert!(entry.matches((2026, 4, 24, 5)), "30 - 7 + 1");
+        assert!(!entry.matches((2026, 4, 23, 4)));
+        assert!(entry.matches((2026, 2, 22, 7)), "28 - 7 + 1");
+        assert!(!entry.matches((2026, 2, 21, 6)));
     }
 }
