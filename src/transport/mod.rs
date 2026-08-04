@@ -47,7 +47,10 @@ use std::{
 use core::fmt;
 
 #[cfg(not(feature = "std"))]
-use alloc::string::String;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 #[cfg(not(feature = "std"))]
 use core::time::Duration;
@@ -110,56 +113,10 @@ impl From<std::io::Error> for TransportError {
     }
 }
 
-/// BACnet Virtual Link Layer (BVLL) message types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum BvllType {
-    /// BACnet/IP specific
-    BacnetIp = 0x81,
-}
-
-/// BVLL function codes for BACnet/IP
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum BvllFunction {
-    /// Pass NPDU to remote device
-    OriginalUnicastNpdu = 0x0A,
-    /// Broadcast NPDU to local network
-    OriginalBroadcastNpdu = 0x0B,
-    /// Secured NPDU
-    SecureBvll = 0x0C,
-    /// Distribute broadcast to remote network
-    DistributeBroadcastToNetwork = 0x09,
-    /// Register as foreign device
-    RegisterForeignDevice = 0x05,
-    /// Read broadcast distribution table
-    ReadBroadcastDistributionTable = 0x02,
-    /// Acknowledge read BDT
-    ReadBroadcastDistributionTableAck = 0x03,
-    /// Forwarded NPDU
-    ForwardedNpdu = 0x04,
-    /// Write broadcast distribution table
-    WriteBroadcastDistributionTable = 0x01,
-    /// Read foreign device table
-    ReadForeignDeviceTable = 0x06,
-    /// Acknowledge read FDT
-    ReadForeignDeviceTableAck = 0x07,
-    /// Delete foreign device table entry
-    DeleteForeignDeviceTableEntry = 0x08,
-    /// Result of operation
-    Result = 0x00,
-}
-
-/// BVLL header
-#[derive(Debug, Clone)]
-pub struct BvllHeader {
-    /// BVLL type (0x81 for BACnet/IP)
-    pub bvll_type: BvllType,
-    /// Function code
-    pub function: BvllFunction,
-    /// Total length including header
-    pub length: u16,
-}
+// The BVLL header and function codes are the datalink layer's types; the
+// transport layer reuses them rather than defining duplicates (they were
+// previously duplicated here as `BvllHeader`/`BvllFunction`).
+pub use crate::datalink::bip::{BvlcFunction, BvlcHeader};
 
 /// Foreign device registration info
 #[cfg(feature = "std")]
@@ -293,94 +250,36 @@ pub mod constants {
     pub const MAX_CONCURRENT_REQUESTS: usize = 255;
 }
 
-impl BvllHeader {
-    /// Create a new BVLL header
-    pub fn new(function: BvllFunction, length: u16) -> Self {
-        Self {
-            bvll_type: BvllType::BacnetIp,
-            function,
-            length,
-        }
-    }
-
-    /// Encode BVLL header to bytes
-    pub fn encode(&self) -> [u8; 4] {
-        [
-            self.bvll_type as u8,
-            self.function as u8,
-            (self.length >> 8) as u8,
-            (self.length & 0xFF) as u8,
-        ]
-    }
-
-    /// Decode BVLL header from bytes
-    pub fn decode(data: &[u8]) -> Result<Self> {
-        if data.len() < 4 {
-            return Err(TransportError::InvalidBvll("Header too short".into()));
-        }
-
-        let bvll_type = match data[0] {
-            0x81 => BvllType::BacnetIp,
-            _ => return Err(TransportError::InvalidBvll("Invalid BVLL type".into())),
-        };
-
-        let function = match data[1] {
-            0x00 => BvllFunction::Result,
-            0x01 => BvllFunction::WriteBroadcastDistributionTable,
-            0x02 => BvllFunction::ReadBroadcastDistributionTable,
-            0x03 => BvllFunction::ReadBroadcastDistributionTableAck,
-            0x04 => BvllFunction::ForwardedNpdu,
-            0x05 => BvllFunction::RegisterForeignDevice,
-            0x06 => BvllFunction::ReadForeignDeviceTable,
-            0x07 => BvllFunction::ReadForeignDeviceTableAck,
-            0x08 => BvllFunction::DeleteForeignDeviceTableEntry,
-            0x09 => BvllFunction::DistributeBroadcastToNetwork,
-            0x0A => BvllFunction::OriginalUnicastNpdu,
-            0x0B => BvllFunction::OriginalBroadcastNpdu,
-            0x0C => BvllFunction::SecureBvll,
-            _ => return Err(TransportError::InvalidBvll("Invalid BVLL function".into())),
-        };
-
-        let length = ((data[2] as u16) << 8) | (data[3] as u16);
-
-        Ok(Self {
-            bvll_type,
-            function,
-            length,
-        })
-    }
-}
-
 /// BVLL message containing header and data
 #[derive(Debug, Clone)]
 pub struct BvllMessage {
-    /// BVLL header
-    pub header: BvllHeader,
+    /// BVLL header (see [`BvlcHeader`] in the datalink layer)
+    pub header: BvlcHeader,
     /// Message data (NPDU)
     pub data: Vec<u8>,
 }
 
 impl BvllMessage {
     /// Create a new BVLL message
-    pub fn new(function: BvllFunction, data: Vec<u8>) -> Self {
+    pub fn new(function: BvlcFunction, data: Vec<u8>) -> Self {
         let length = (constants::BVLL_HEADER_SIZE + data.len()) as u16;
         Self {
-            header: BvllHeader::new(function, length),
+            header: BvlcHeader::new(function, length),
             data,
         }
     }
 
     /// Encode BVLL message to bytes
     pub fn encode(&self) -> Vec<u8> {
-        let mut result = Vec::new();
-        result.extend_from_slice(&self.header.encode());
+        let mut result = self.header.encode();
         result.extend_from_slice(&self.data);
         result
     }
 
     /// Decode BVLL message from bytes
     pub fn decode(data: &[u8]) -> Result<Self> {
-        let header = BvllHeader::decode(data)?;
+        let header =
+            BvlcHeader::decode(data).map_err(|e| TransportError::InvalidBvll(e.to_string()))?;
 
         if data.len() < header.length as usize {
             return Err(TransportError::InvalidBvll("Message too short".into()));
@@ -550,13 +449,13 @@ impl BacnetIpTransport {
 
     /// Send NPDU as original unicast
     pub fn send_npdu_unicast(&mut self, npdu: &[u8], dest: SocketAddr) -> Result<()> {
-        let message = BvllMessage::new(BvllFunction::OriginalUnicastNpdu, npdu.to_vec());
+        let message = BvllMessage::new(BvlcFunction::OriginalUnicastNpdu, npdu.to_vec());
         self.send_bvll(message, dest)
     }
 
     /// Send NPDU as original broadcast
     pub fn send_npdu_broadcast(&mut self, npdu: &[u8], dest: SocketAddr) -> Result<()> {
-        let message = BvllMessage::new(BvllFunction::OriginalBroadcastNpdu, npdu.to_vec());
+        let message = BvllMessage::new(BvlcFunction::OriginalBroadcastNpdu, npdu.to_vec());
         self.send_bvll(message, dest)
     }
 
@@ -586,14 +485,14 @@ impl BacnetIpTransport {
         let mut data = Vec::new();
         data.extend_from_slice(&ttl.to_be_bytes());
 
-        let message = BvllMessage::new(BvllFunction::RegisterForeignDevice, data);
+        let message = BvllMessage::new(BvlcFunction::RegisterForeignDevice, data);
         self.send_bvll(message, bbmd_addr)?;
 
         // Wait for registration confirmation with timeout
         let start_time = Instant::now();
         while start_time.elapsed() < self.config.registration_timeout {
             if let Ok((response, src)) = self.receive_bvll_timeout(Duration::from_millis(100)) {
-                if src == bbmd_addr && response.header.function == BvllFunction::Result {
+                if src == bbmd_addr && response.header.function == BvlcFunction::Result {
                     // Check result code
                     if !response.data.is_empty() {
                         let result_code = u16::from_be_bytes([response.data[0], response.data[1]]);
@@ -1083,7 +982,7 @@ mod tests {
 
     #[test]
     fn test_bvll_header_encode_decode() {
-        let header = BvllHeader::new(BvllFunction::OriginalUnicastNpdu, 100);
+        let header = BvlcHeader::new(BvlcFunction::OriginalUnicastNpdu, 100);
         let encoded = header.encode();
 
         assert_eq!(encoded[0], 0x81); // BACnet/IP
@@ -1091,8 +990,8 @@ mod tests {
         assert_eq!(encoded[2], 0x00); // Length high byte
         assert_eq!(encoded[3], 0x64); // Length low byte (100)
 
-        let decoded = BvllHeader::decode(&encoded).unwrap();
-        assert_eq!(decoded.bvll_type as u8, header.bvll_type as u8);
+        let decoded = BvlcHeader::decode(&encoded).unwrap();
+        assert_eq!(decoded.bvlc_type, header.bvlc_type);
         assert_eq!(decoded.function as u8, header.function as u8);
         assert_eq!(decoded.length, header.length);
     }
@@ -1100,7 +999,7 @@ mod tests {
     #[test]
     fn test_bvll_message_encode_decode() {
         let test_data = vec![0x01, 0x02, 0x03, 0x04];
-        let message = BvllMessage::new(BvllFunction::OriginalBroadcastNpdu, test_data.clone());
+        let message = BvllMessage::new(BvlcFunction::OriginalBroadcastNpdu, test_data.clone());
 
         let encoded = message.encode();
         assert_eq!(encoded.len(), 4 + test_data.len()); // Header + data
@@ -1108,7 +1007,7 @@ mod tests {
         let decoded = BvllMessage::decode(&encoded).unwrap();
         assert_eq!(
             decoded.header.function as u8,
-            BvllFunction::OriginalBroadcastNpdu as u8
+            BvlcFunction::OriginalBroadcastNpdu as u8
         );
         assert_eq!(decoded.data, test_data);
     }
@@ -1117,15 +1016,15 @@ mod tests {
     fn test_bvll_function_decode() {
         // Test all BVLL function codes
         let test_cases = [
-            (0x00, BvllFunction::Result),
-            (0x0A, BvllFunction::OriginalUnicastNpdu),
-            (0x0B, BvllFunction::OriginalBroadcastNpdu),
-            (0x05, BvllFunction::RegisterForeignDevice),
+            (0x00, BvlcFunction::Result),
+            (0x0A, BvlcFunction::OriginalUnicastNpdu),
+            (0x0B, BvlcFunction::OriginalBroadcastNpdu),
+            (0x05, BvlcFunction::RegisterForeignDevice),
         ];
 
         for (code, expected) in test_cases.iter() {
             let data = [0x81, *code, 0x00, 0x04];
-            let header = BvllHeader::decode(&data).unwrap();
+            let header = BvlcHeader::decode(&data).unwrap();
             assert_eq!(header.function as u8, *expected as u8);
         }
     }
@@ -1176,15 +1075,15 @@ mod tests {
     fn test_invalid_bvll_decode() {
         // Test too short header
         let short_data = [0x81, 0x0A];
-        assert!(BvllHeader::decode(&short_data).is_err());
+        assert!(BvlcHeader::decode(&short_data).is_err());
 
         // Test invalid BVLL type
         let invalid_type = [0x82, 0x0A, 0x00, 0x04];
-        assert!(BvllHeader::decode(&invalid_type).is_err());
+        assert!(BvlcHeader::decode(&invalid_type).is_err());
 
         // Test invalid function code
         let invalid_function = [0x81, 0xFF, 0x00, 0x04];
-        assert!(BvllHeader::decode(&invalid_function).is_err());
+        assert!(BvlcHeader::decode(&invalid_function).is_err());
     }
 
     #[cfg(feature = "std")]

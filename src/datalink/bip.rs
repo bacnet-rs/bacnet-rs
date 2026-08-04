@@ -76,9 +76,11 @@ use std::{
 };
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{vec, vec::Vec};
 
-use crate::datalink::{DataLink, DataLinkAddress, DataLinkError, DataLinkType, Result};
+#[cfg(feature = "std")]
+use crate::datalink::{DataLink, DataLinkAddress, DataLinkType};
+use crate::datalink::{DataLinkError, Result};
 
 /// BACnet/IP well-known UDP port number.
 ///
@@ -125,6 +127,17 @@ pub const BACNET_IP_PORT: u16 = 47808;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BvlcFunction {
+    /// BVLC-Result (0x00).
+    ///
+    /// Reports the outcome of a BVLC request, e.g. a BBMD's response to
+    /// Register-Foreign-Device or a BDT/FDT write.
+    Result = 0x00,
+
+    /// Write-Broadcast-Distribution-Table (0x01).
+    ///
+    /// Request to replace a BBMD's Broadcast Distribution Table.
+    WriteBroadcastDistributionTable = 0x01,
+
     /// Original-Unicast-NPDU (0x0A).
     ///
     /// Encapsulates an NPDU for unicast delivery to a specific BACnet/IP device.
@@ -183,15 +196,11 @@ pub enum BvlcFunction {
     /// respective networks.
     DistributeBroadcastToNetwork = 0x09,
 
-    /// Forwarded-NPDU-From-Device (0x0C).
+    /// Secure-BVLL (0x0C).
     ///
-    /// Alternative forwarding mechanism that preserves the original device address.
-    ForwardedNpduFromDevice = 0x0C,
-
-    /// Secure-BVLL (0x0D).
-    ///
-    /// Used for BACnet Secure Connect (BACnet/SC) encrypted communication.
-    SecureBvll = 0x0D,
+    /// Carries security-wrapped BVLL messages (ASHRAE 135 Annex J, added by
+    /// Addendum 135-2008g).
+    SecureBvll = 0x0C,
 }
 
 impl TryFrom<u8> for BvlcFunction {
@@ -199,6 +208,8 @@ impl TryFrom<u8> for BvlcFunction {
 
     fn try_from(value: u8) -> core::result::Result<Self, Self::Error> {
         let function = match value {
+            0x00 => BvlcFunction::Result,
+            0x01 => BvlcFunction::WriteBroadcastDistributionTable,
             0x0A => BvlcFunction::OriginalUnicastNpdu,
             0x0B => BvlcFunction::OriginalBroadcastNpdu,
             0x04 => BvlcFunction::ForwardedNpdu,
@@ -209,8 +220,7 @@ impl TryFrom<u8> for BvlcFunction {
             0x07 => BvlcFunction::ReadForeignDeviceTableAck,
             0x08 => BvlcFunction::DeleteForeignDeviceTableEntry,
             0x09 => BvlcFunction::DistributeBroadcastToNetwork,
-            0x0C => BvlcFunction::ForwardedNpduFromDevice,
-            0x0D => BvlcFunction::SecureBvll,
+            0x0C => BvlcFunction::SecureBvll,
             _ => return Err(DataLinkError::InvalidFrame),
         };
 

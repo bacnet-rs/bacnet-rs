@@ -49,12 +49,30 @@ security-audit advisory in the dependency tree.
 
 ### Fixed
 
+- `BvlcFunction` in `datalink::bip` now matches ASHRAE 135 Annex J: `SecureBvll`
+  moved from `0x0D` to its standard code `0x0C`, the nonstandard
+  `ForwardedNpduFromDevice` variant was removed, and the missing `Result` (`0x00`)
+  and `WriteBroadcastDistributionTable` (`0x01`) functions were added
+- `who_is`/`who_is_to` now send Who-Is as a global-broadcast NPDU (DNET `0xFFFF`, hop count 255) inside an
+  Original-Broadcast-NPDU BVLC when the target is a broadcast address, matching YABE and the reference bacnet-stack;
+  unicast targets get a plain local NPDU inside Original-Unicast-NPDU instead of the previous broadcast-BVLC/local-NPDU
+  mix (#58)
 - Socket receive loops now treat both `WouldBlock` and `TimedOut` as timeouts,
   fixing a cross-platform timeout bug on Windows (`WSAETIMEDOUT`)
+- The no-std build (`cargo build --no-default-features`) compiles again — it had
+  ~200 accumulated errors: missing `alloc` imports (`Vec`, `String`, `Box`,
+  `vec!`, `format!`, `ToString`) across 18 modules, `std::` paths in code shared with no-std (now `core::`), the
+  `generate_custom_enum!` macro emitting
+  `std::fmt` impls, the std-only `util::statistics` module (uses
+  `Instant`/`Arc`/`Mutex`) not being feature-gated, and `f64::powi`/`f64::log2`
+  (std-only) used in retry backoff and frame-entropy calculations
 - Clippy warnings resolved; conditional logic refactored to `if let` guards
 
 ### Removed
 
+- Removed the duplicate `BvllHeader`/`BvllFunction`/`BvllType` types from the
+  `transport` module; the transport layer now reuses (and re-exports)
+  `datalink::bip::{BvlcHeader, BvlcFunction}` so there is a single BVLL header implementation
 - Removed the unused optional `env_logger` dependency, which transitively pulled in
   the unmaintained `proc-macro-error2` crate (RUSTSEC-2026-0173) via `jiff` → `defmt`
 - Removed the `advanced_device`, `comprehensive_whois_scan`, `debug_formatter`, and
