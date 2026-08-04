@@ -47,7 +47,12 @@ use std::{fmt, time::Duration};
 use core::fmt;
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 #[cfg(not(feature = "std"))]
 use core::time::Duration;

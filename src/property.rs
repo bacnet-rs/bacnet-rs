@@ -7,7 +7,11 @@
 use std::fmt::Display;
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 

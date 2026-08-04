@@ -6,6 +6,12 @@
 //! The enum includes all standard BACnet engineering units with their exact
 //! numeric values for protocol compatibility. Units are ordered by ID.
 
+#[cfg(not(feature = "std"))]
+use alloc::{
+    format,
+    string::{String, ToString},
+};
+
 macro_rules! generate_engineering_units {
     ($(#[$doc:meta])* $name:ident { $($variant:ident = $value:expr => $bacnet_name:literal $unit_symbol:literal,)+ }) => {
         pastey::paste! {

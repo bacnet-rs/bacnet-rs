@@ -72,9 +72,11 @@
 use std::sync::{Arc, Mutex};
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 
-use crate::datalink::{DataLink, DataLinkAddress, DataLinkError, DataLinkType, Result};
+#[cfg(feature = "std")]
+use crate::datalink::{DataLink, DataLinkAddress, DataLinkType};
+use crate::datalink::{DataLinkError, Result};
 
 /// Ethernet broadcast MAC address (all ones).
 ///

@@ -15,6 +15,14 @@
 use crate::datalink::DataLinkType;
 use crate::util::crc16_mstp;
 
+#[cfg(not(feature = "std"))]
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+
 /// Frame validation result with detailed information
 #[derive(Debug, Clone)]
 pub struct ValidationResult {
@@ -467,6 +475,29 @@ pub enum Pattern {
     Suspicious { description: String },
 }
 
+/// Base-2 logarithm for the entropy calculation.
+#[cfg(feature = "std")]
+fn log2(x: f64) -> f64 {
+    x.log2()
+}
+
+/// Base-2 logarithm approximation for builds without std, where `f64::log2`
+/// is unavailable. Splits the float into exponent and mantissa and applies a
+/// quadratic fit for the mantissa's log2 (max error ~0.01) — plenty for the
+/// entropy heuristic this feeds.
+#[cfg(not(feature = "std"))]
+fn log2(x: f64) -> f64 {
+    if x <= 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    let bits = x.to_bits();
+    let exponent = (((bits >> 52) & 0x7FF) as i64 - 1023) as f64;
+    // Mantissa remapped into [1, 2).
+    let m = f64::from_bits((bits & 0x000F_FFFF_FFFF_FFFF) | 0x3FF0_0000_0000_0000);
+    let log2_m = (-0.344845 * m + 2.024658) * m - 1.674873;
+    exponent + log2_m
+}
+
 /// Calculate frame statistics
 fn calculate_frame_statistics(data: &[u8]) -> FrameStatistics {
     let mut byte_distribution = [0u32; 256];
@@ -490,7 +521,7 @@ fn calculate_frame_statistics(data: &[u8]) -> FrameStatistics {
     for count in byte_distribution.iter() {
         if *count > 0 {
             let probability = *count as f64 / total;
-            entropy -= probability * probability.log2();
+            entropy -= probability * log2(probability);
         }
     }
 

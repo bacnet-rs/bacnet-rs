@@ -32,9 +32,11 @@ use std::{
 };
 
 #[cfg(not(feature = "std"))]
-use alloc::{collections::VecDeque, string::String, vec::Vec};
+use alloc::vec::Vec;
 
-use crate::datalink::{DataLink, DataLinkAddress, DataLinkError, DataLinkType, Result};
+#[cfg(feature = "std")]
+use crate::datalink::{DataLink, DataLinkAddress, DataLinkType};
+use crate::datalink::{DataLinkError, Result};
 use crate::util::crc16_mstp;
 
 /// MS/TP frame preamble bytes

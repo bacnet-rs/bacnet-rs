@@ -193,10 +193,15 @@ pub mod enum_macros;
 
 // Debug formatting utilities
 #[cfg(not(feature = "std"))]
-use core::fmt;
+use core::time::Duration;
 
 #[cfg(not(feature = "std"))]
-use alloc::{format, string::String, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 #[cfg(feature = "std")]
 use std::{
@@ -585,6 +590,7 @@ pub mod performance {
 }
 
 /// Statistics collection helpers
+#[cfg(feature = "std")]
 pub mod statistics {
     use super::*;
 
@@ -872,7 +878,13 @@ impl RetryConfig {
         let delay_ms = if attempt == 0 {
             self.initial_delay_ms
         } else {
-            let delay = self.initial_delay_ms as f64 * self.backoff_multiplier.powi(attempt as i32);
+            // Repeated multiplication instead of `f64::powi`, which is
+            // unavailable without std.
+            let mut factor = 1.0f64;
+            for _ in 0..attempt {
+                factor *= self.backoff_multiplier;
+            }
+            let delay = self.initial_delay_ms as f64 * factor;
             delay.min(self.max_delay_ms as f64) as u64
         };
 
@@ -1248,8 +1260,7 @@ pub mod debug {
     /// Create a detailed hex dump with annotations
     pub fn annotated_hex_dump(data: &[u8], annotations: &[(usize, String)]) -> String {
         let mut result = String::new();
-        let mut annotation_map: std::collections::HashMap<usize, String> =
-            annotations.iter().cloned().collect();
+        let mut annotation_map: HashMap<usize, String> = annotations.iter().cloned().collect();
 
         for (i, chunk) in data.chunks(16).enumerate() {
             let offset = i * 16;

@@ -52,7 +52,9 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 use alloc::{
     collections::{BTreeMap, BTreeSet},
-    string::String,
+    format,
+    string::{String, ToString},
+    vec,
     vec::Vec,
 };
 

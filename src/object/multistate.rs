@@ -9,7 +9,12 @@ use crate::object::{
 };
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 /// Multi-state Input object
 #[derive(Debug, Clone)]

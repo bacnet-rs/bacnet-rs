@@ -170,7 +170,10 @@ use std::fmt;
 use core::fmt;
 
 #[cfg(not(feature = "std"))]
-use alloc::{format, string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 /// Result type for service operations
 #[cfg(feature = "std")]
