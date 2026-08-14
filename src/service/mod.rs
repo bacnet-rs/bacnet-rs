@@ -385,9 +385,9 @@ generate_custom_enum!(
 use crate::encoding::{
     decode_context_enumerated, decode_context_object_id, decode_context_tag,
     decode_context_unsigned, decode_enumerated, decode_object_identifier, decode_tag,
-    decode_unsigned, encode_context_enumerated, encode_context_object_id, encode_context_unsigned,
-    encode_enumerated, encode_object_identifier, encode_unsigned, BACnetTag,
-    Result as EncodingResult,
+    decode_unsigned, encode_context_boolean, encode_context_enumerated, encode_context_object_id,
+    encode_context_unsigned, encode_enumerated, encode_object_identifier, encode_unsigned,
+    BACnetTag, Result as EncodingResult,
 };
 use crate::object::{
     ObjectError, ObjectIdentifier, PropertyIdentifier, PropertyValue, Segmentation,
@@ -1258,24 +1258,23 @@ impl SubscribeCovRequest {
     /// Encode the Subscribe COV request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
         // Subscriber process identifier - context tag 0
-        buffer.push(0x09); // Context tag 0, length 1
-        buffer.push(self.subscriber_process_identifier as u8);
+        let mut proc_id = encode_context_unsigned(self.subscriber_process_identifier, 0)?;
+        buffer.append(&mut proc_id);
 
         // Monitored object identifier - context tag 1
-        let object_id: u32 = self.monitored_object_identifier.try_into()?;
-        buffer.push(0x1C); // Context tag 1, length 4
-        buffer.extend_from_slice(&object_id.to_be_bytes());
+        let mut obj_id = encode_context_object_id(self.monitored_object_identifier, 1)?;
+        buffer.append(&mut obj_id);
 
         // Issue confirmed notifications - context tag 2 (optional)
         if let Some(confirmed) = self.issue_confirmed_notifications {
-            buffer.push(0x22); // Context tag 2, length 2
-            buffer.push(if confirmed { 1 } else { 0 });
+            let mut confirmed = encode_context_boolean(confirmed, 2)?;
+            buffer.append(&mut confirmed);
         }
 
         // Lifetime - context tag 3 (optional)
         if let Some(lifetime) = self.lifetime {
-            buffer.push(0x39); // Context tag 3, length 1
-            buffer.push(lifetime as u8);
+            let mut lifetime = encode_context_unsigned(lifetime, 3)?;
+            buffer.append(&mut lifetime);
         }
 
         Ok(())
