@@ -1046,6 +1046,39 @@ pub fn decode_context_object_id(
     Ok((object_id.into(), tag_consumed + 4))
 }
 
+pub fn encode_context_boolean(value: bool, tag_number: u8) -> Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+
+    encode_context_tag(&mut buffer, tag_number, 1)?;
+    buffer.push(value as u8);
+
+    Ok(buffer)
+}
+
+pub fn decode_context_boolean(data: &[u8], expected_tag: u8) -> Result<(bool, usize)> {
+    let (tag_number, length, tag_consumed) = decode_context_tag(data)?;
+
+    if tag_number != expected_tag {
+        return Err(EncodingError::InvalidTag);
+    }
+
+    if length != 1 {
+        return Err(EncodingError::InvalidLength);
+    }
+
+    if data.len() < tag_consumed + 1 {
+        return Err(EncodingError::BufferUnderflow);
+    }
+
+    let value = match data[tag_consumed] {
+        0 => false,
+        1 => true,
+        _ => return Err(EncodingError::ValueOutOfRange),
+    };
+
+    Ok((value, tag_consumed + 1))
+}
+
 impl TryFrom<u8> for ApplicationTag {
     type Error = EncodingError;
 
