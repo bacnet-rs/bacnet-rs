@@ -1244,12 +1244,13 @@ impl SubscribeCovRequest {
     pub fn with_lifetime(
         subscriber_process_identifier: u32,
         monitored_object_identifier: ObjectIdentifier,
+        issue_confirmed_notifications: bool,
         lifetime: u32,
     ) -> Self {
         Self {
             subscriber_process_identifier,
             monitored_object_identifier,
-            issue_confirmed_notifications: None,
+            issue_confirmed_notifications: Some(issue_confirmed_notifications),
             lifetime: Some(lifetime),
         }
     }
@@ -2176,7 +2177,8 @@ mod tests {
         assert_eq!(cov_confirmed.issue_confirmed_notifications, Some(true));
 
         // Test with lifetime
-        let cov_lifetime = SubscribeCovRequest::with_lifetime(123, object_id, 3600);
+        let cov_lifetime = SubscribeCovRequest::with_lifetime(123, object_id, true, 3600);
+        assert_eq!(cov_lifetime.issue_confirmed_notifications, Some(true));
         assert_eq!(cov_lifetime.lifetime, Some(3600));
 
         // Test encoding
