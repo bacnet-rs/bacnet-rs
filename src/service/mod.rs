@@ -389,9 +389,7 @@ use crate::encoding::{
     encode_context_unsigned, encode_enumerated, encode_object_identifier, encode_unsigned,
     BACnetTag, Result as EncodingResult,
 };
-use crate::object::{
-    ObjectError, ObjectIdentifier, PropertyIdentifier, PropertyValue, Segmentation,
-};
+use crate::object::{ObjectError, ObjectIdentifier, PropertyIdentifier, Segmentation};
 use crate::property::{self, decode_property_value, encode_property_value};
 use crate::{generate_custom_enum, EncodingError};
 
@@ -1322,8 +1320,113 @@ impl SubscribeCovPropertyRequest {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct CovNotificationProperty {
+    pub property_identifier: PropertyIdentifier,
+    pub property_values: Vec<property::PropertyValue>,
+    pub property_array_index: Option<u32>,
+    pub priority: Option<u8>,
+}
+
+impl CovNotificationProperty {
+    pub fn new(
+        property_identifier: PropertyIdentifier,
+        property_values: Vec<property::PropertyValue>,
+    ) -> Self {
+        Self {
+            property_identifier,
+            property_values,
+            property_array_index: None,
+            priority: None,
+        }
+    }
+    pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
+        let mut prop_id = encode_context_enumerated(self.property_identifier.into(), 0)?;
+        buffer.append(&mut prop_id);
+
+        if let Some(array_index) = self.property_array_index {
+            let mut array_bytes = encode_context_unsigned(array_index, 1)?;
+            buffer.append(&mut array_bytes);
+        }
+
+        buffer.push(0x2E);
+        for value in &self.property_values {
+            encode_property_value(value, buffer)?;
+        }
+        buffer.push(0x2F);
+
+        if let Some(priority) = self.priority {
+            let mut priority_bytes = encode_context_unsigned(priority as u32, 3)?;
+            buffer.append(&mut priority_bytes);
+        }
+
+        Ok(())
+    }
+
+    pub fn decode(data: &[u8]) -> EncodingResult<(Self, usize)> {
+        let mut total_consumed = 0;
+
+        let (prop_id, consumed) = decode_context_enumerated(&data[total_consumed..], 0)?;
+        total_consumed += consumed;
+
+        let (tag, _, _) = decode_tag(&data[total_consumed..])?;
+
+        let property_array_index = if tag == BACnetTag::Context(1) {
+            let (index, consumed) = decode_context_unsigned(&data[total_consumed..], 1)?;
+            total_consumed += consumed;
+            Some(index)
+        } else {
+            None
+        };
+
+        let (tag, _, consumed) = decode_tag(&data[total_consumed..])?;
+        total_consumed += consumed;
+        let mut property_values = Vec::new();
+
+        if let BACnetTag::Context(2) = tag {
+            let (mut current_tag, _, _) = decode_tag(&data[total_consumed..])?;
+
+            while current_tag != BACnetTag::Context(2) {
+                let (value, consumed) = decode_property_value(&data[total_consumed..])?;
+                total_consumed += consumed;
+                property_values.push(value);
+                let (tag, _, _) = decode_tag(&data[total_consumed..])?;
+                current_tag = tag;
+            }
+
+            let (_, _, consumed) = decode_tag(&data[total_consumed..])?;
+            total_consumed += consumed;
+        } else {
+            return Err(EncodingError::InvalidTag);
+        };
+
+        let priority = if total_consumed < data.len() {
+            let (tag, _, _) = decode_tag(&data[total_consumed..])?;
+            if tag == BACnetTag::Context(3) {
+                let (priority, consumed) = decode_context_unsigned(&data[total_consumed..], 3)?;
+                total_consumed += consumed;
+                Some(priority as u8)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok((
+            Self {
+                property_identifier: prop_id.into(),
+                property_values,
+                property_array_index,
+                priority,
+            },
+            total_consumed,
+        ))
+    }
+}
+
 /// COV Notification request (unconfirmed service)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CovNotificationRequest {
     /// Subscriber process identifier
     pub subscriber_process_identifier: u32,
@@ -1333,8 +1436,8 @@ pub struct CovNotificationRequest {
     pub monitored_object_identifier: ObjectIdentifier,
     /// Time remaining (seconds)
     pub time_remaining: u32,
-    /// List of values (property-value pairs)
-    pub list_of_values: Vec<PropertyValue>,
+    /// List of property values
+    pub properties: Vec<CovNotificationProperty>,
 }
 
 impl CovNotificationRequest {
@@ -1344,41 +1447,85 @@ impl CovNotificationRequest {
         initiating_device_identifier: ObjectIdentifier,
         monitored_object_identifier: ObjectIdentifier,
         time_remaining: u32,
-        list_of_values: Vec<PropertyValue>,
+        properties: Vec<CovNotificationProperty>,
     ) -> Self {
         Self {
             subscriber_process_identifier,
             initiating_device_identifier,
             monitored_object_identifier,
             time_remaining,
-            list_of_values,
+            properties,
         }
     }
 
     /// Encode the COV Notification request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
-        // Subscriber process identifier - context tag 0
-        buffer.push(0x09); // Context tag 0, length 1
-        buffer.push(self.subscriber_process_identifier as u8);
+        let mut proc_id = encode_context_unsigned(self.subscriber_process_identifier, 0)?;
+        buffer.append(&mut proc_id);
 
-        // Initiating device identifier - context tag 1
-        let device_id: u32 = self.initiating_device_identifier.try_into()?;
-        buffer.push(0x1C); // Context tag 1, length 4
-        buffer.extend_from_slice(&device_id.to_be_bytes());
+        let mut device_id = encode_context_object_id(self.initiating_device_identifier, 1)?;
+        buffer.append(&mut device_id);
 
-        // Monitored object identifier - context tag 2
-        let object_id: u32 = self.monitored_object_identifier.try_into()?;
-        buffer.push(0x2C); // Context tag 2, length 4
-        buffer.extend_from_slice(&object_id.to_be_bytes());
+        let mut object_id = encode_context_object_id(self.monitored_object_identifier, 2)?;
+        buffer.append(&mut object_id);
 
-        // Time remaining - context tag 3
-        buffer.push(0x39); // Context tag 3, length 1
-        buffer.push(self.time_remaining as u8);
+        let mut time_remaining = encode_context_unsigned(self.time_remaining, 3)?;
+        buffer.append(&mut time_remaining);
 
-        // List of values would be encoded here in a real implementation
-        // This is complex as it involves encoding property-value pairs
+        buffer.push(0x4E);
+        for property in &self.properties {
+            property.encode(buffer)?;
+        }
+        buffer.push(0x4F);
 
         Ok(())
+    }
+
+    /// Decode the COV Notification request
+    pub fn decode(data: &[u8]) -> EncodingResult<Self> {
+        let mut total_consumed = 0;
+
+        let (subscriber_process_identifier, consumed) =
+            decode_context_unsigned(&data[total_consumed..], 0)?;
+        total_consumed += consumed;
+
+        let (initiating_device_identifier, consumed) =
+            decode_context_object_id(&data[total_consumed..], 1)?;
+        total_consumed += consumed;
+
+        let (monitored_object_identifier, consumed) =
+            decode_context_object_id(&data[total_consumed..], 2)?;
+        total_consumed += consumed;
+
+        let (time_remaining, consumed) = decode_context_unsigned(&data[total_consumed..], 3)?;
+        total_consumed += consumed;
+
+        let (tag, _, consumed) = decode_tag(&data[total_consumed..])?;
+        total_consumed += consumed;
+        let mut properties = Vec::new();
+
+        if let BACnetTag::Context(4) = tag {
+            let (mut current_tag, _, _) = decode_tag(&data[total_consumed..])?;
+
+            while current_tag != BACnetTag::Context(4) {
+                let (property, consumed) =
+                    CovNotificationProperty::decode(&data[total_consumed..])?;
+                total_consumed += consumed;
+                properties.push(property);
+                let (tag, _, _) = decode_tag(&data[total_consumed..])?;
+                current_tag = tag;
+            }
+        } else {
+            return Err(EncodingError::InvalidTag);
+        };
+
+        Ok(Self {
+            subscriber_process_identifier,
+            initiating_device_identifier,
+            monitored_object_identifier,
+            time_remaining,
+            properties,
+        })
     }
 }
 
@@ -2219,23 +2366,32 @@ mod tests {
     fn test_cov_notification_request() {
         let device_id = ObjectIdentifier::new(ObjectType::Device, 1);
         let object_id = ObjectIdentifier::new(ObjectType::AnalogInput, 1);
-        let values = vec![
-            crate::object::PropertyValue::Real(25.5), // Present Value
-            crate::object::PropertyValue::Boolean(false), // Status Flags
+        let properties = vec![
+            CovNotificationProperty::new(
+                PropertyIdentifier::PresentValue,
+                vec![crate::property::PropertyValue::Real(25.5)],
+            ),
+            CovNotificationProperty::new(
+                PropertyIdentifier::StatusFlags,
+                vec![crate::property::PropertyValue::Boolean(false)],
+            ),
         ];
 
-        let notification = CovNotificationRequest::new(123, device_id, object_id, 3600, values);
+        let notification = CovNotificationRequest::new(123, device_id, object_id, 3600, properties);
 
         assert_eq!(notification.subscriber_process_identifier, 123);
         assert_eq!(notification.initiating_device_identifier, device_id);
         assert_eq!(notification.monitored_object_identifier, object_id);
         assert_eq!(notification.time_remaining, 3600);
-        assert_eq!(notification.list_of_values.len(), 2);
+        assert_eq!(notification.properties.len(), 2);
 
         // Test encoding
         let mut buffer = Vec::new();
         notification.encode(&mut buffer).unwrap();
         assert!(!buffer.is_empty());
+
+        let decoded = CovNotificationRequest::decode(&buffer).unwrap();
+        assert_eq!(decoded, notification);
     }
 
     #[test]
