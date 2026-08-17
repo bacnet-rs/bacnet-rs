@@ -259,6 +259,7 @@ pub enum ConfirmedServiceChoice {
     ReadRange = 26,
     SubscribeCOV = 5,
     SubscribeCOVProperty = 28,
+    ConfirmedCOVNotification = 1,
 
     // Protocol Revision 30 - Security Services
     AuthRequest = 34,
@@ -294,6 +295,7 @@ impl TryFrom<u8> for ConfirmedServiceChoice {
             26 => Ok(Self::ReadRange),
             5 => Ok(Self::SubscribeCOV),
             28 => Ok(Self::SubscribeCOVProperty),
+            1 => Ok(Self::ConfirmedCOVNotification),
             34 => Ok(Self::AuthRequest),
             _ => Err(ServiceError::UnsupportedServiceChoice(value)),
         }
