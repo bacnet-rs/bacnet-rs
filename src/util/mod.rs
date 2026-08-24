@@ -1105,7 +1105,7 @@ pub mod debug {
             4 => {
                 // UCS-2 (UTF-16)
                 let mut utf16_chars = Vec::new();
-                for chunk in string_data.chunks_exact(2) {
+                for chunk in string_data.as_chunks::<2>().0.iter() {
                     let char_code = u16::from_be_bytes([chunk[0], chunk[1]]);
                     utf16_chars.push(char_code);
                 }
