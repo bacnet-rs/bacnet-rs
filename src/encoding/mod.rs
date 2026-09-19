@@ -138,6 +138,8 @@ use alloc::{string::String, vec::Vec};
 
 use crate::object::ObjectIdentifier;
 
+pub mod tag;
+
 /// Result type for encoding operations
 #[cfg(feature = "std")]
 pub type Result<T> = std::result::Result<T, EncodingError>;
