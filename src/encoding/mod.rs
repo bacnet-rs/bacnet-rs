@@ -142,12 +142,14 @@ use alloc::{
 
 use crate::object::ObjectIdentifier;
 
+pub mod bit_string;
 pub mod character_string;
 pub mod integer;
 pub mod octet_string;
 pub mod real;
 pub mod tag;
 
+pub use bit_string::{decode_bit_string, encode_bit_string};
 pub use character_string::{
     decode_character_string, encode_character_string, CharacterSet, CharacterString,
 };
@@ -233,9 +235,6 @@ pub fn decode_boolean(data: &[u8]) -> Result<(bool, usize)> {
 
     Ok((value, consumed))
 }
-
-// `encode_octet_string`/`decode_octet_string` live in the `octet_string`
-// module (re-exported above).
 
 /// Encode a BACnet date
 pub fn encode_date(buffer: &mut Vec<u8>, year: u16, month: u8, day: u8, weekday: u8) -> Result<()> {
@@ -536,96 +535,6 @@ pub mod advanced {
         /// Update decoding statistics
         pub fn update_decode_stats(&mut self, bytes_decoded: usize) {
             self.stats.total_bytes_decoded += bytes_decoded as u64;
-        }
-    }
-
-    /// Bit string encoding/decoding utilities
-    pub mod bitstring {
-        use super::*;
-
-        /// Encode a bit string
-        #[allow(clippy::manual_is_multiple_of)]
-        pub fn encode_bit_string(buffer: &mut Vec<u8>, bits: &[bool]) -> Result<()> {
-            let byte_count = bits.len().div_ceil(8);
-            let unused_bits = if bits.len() % 8 == 0 {
-                0
-            } else {
-                8 - (bits.len() % 8)
-            };
-
-            Tag {
-                number: ApplicationTagNumber::BitString as u32,
-                class: TagClass::Application,
-                value: TagValue::Primitive((byte_count + 1) as u32),
-            }
-            .encode(buffer)?;
-            buffer.push(unused_bits as u8);
-
-            let mut current_byte = 0u8;
-            let mut bit_pos = 0;
-
-            for &bit in bits {
-                if bit {
-                    current_byte |= 1 << (7 - bit_pos);
-                }
-                bit_pos += 1;
-
-                if bit_pos == 8 {
-                    buffer.push(current_byte);
-                    current_byte = 0;
-                    bit_pos = 0;
-                }
-            }
-
-            if bit_pos > 0 {
-                buffer.push(current_byte);
-            }
-
-            Ok(())
-        }
-
-        /// Decode a bit string
-        pub fn decode_bit_string(data: &[u8]) -> Result<(Vec<bool>, usize)> {
-            let (t, mut consumed) = Tag::decode(data)?;
-
-            if t.class != TagClass::Application
-                || t.number != ApplicationTagNumber::BitString as u32
-            {
-                return Err(EncodingError::InvalidTag);
-            }
-            let length = t.content_length().unwrap_or(0) as usize;
-
-            if length == 0 || data.len() < consumed + length {
-                return Err(EncodingError::BufferUnderflow);
-            }
-
-            let unused_bits = data[consumed] as usize;
-            consumed += 1;
-
-            if unused_bits > 7 {
-                return Err(EncodingError::InvalidFormat(
-                    "Invalid unused bits count".to_string(),
-                ));
-            }
-
-            let mut bits = Vec::new();
-            let byte_count = length - 1;
-
-            for i in 0..byte_count {
-                let byte_val = data[consumed + i];
-                let bits_in_byte = if i == byte_count - 1 {
-                    8 - unused_bits
-                } else {
-                    8
-                };
-
-                for bit_pos in 0..bits_in_byte {
-                    bits.push((byte_val & (1 << (7 - bit_pos))) != 0);
-                }
-            }
-
-            consumed += byte_count;
-            Ok((bits, consumed))
         }
     }
 
@@ -1735,19 +1644,6 @@ mod tests {
         encode_closing_tag(&mut buffer, 3).unwrap();
 
         assert_eq!(buffer, vec![0x3E, 0x3F]);
-    }
-
-    #[test]
-    fn test_bit_string_encoding() {
-        use advanced::bitstring::*;
-
-        let mut buffer = Vec::new();
-        let bits = vec![true, false, true, true, false, false, true, false, true];
-
-        encode_bit_string(&mut buffer, &bits).unwrap();
-        let (decoded_bits, _) = decode_bit_string(&buffer).unwrap();
-
-        assert_eq!(decoded_bits, bits);
     }
 
     #[test]
