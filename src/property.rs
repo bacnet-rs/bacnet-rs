@@ -17,12 +17,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     encoding::{
-        advanced::bitstring::{decode_bit_string, encode_bit_string},
-        decode_boolean, decode_character_string, decode_date, decode_double, decode_enumerated,
-        decode_object_identifier, decode_octet_string, decode_real, decode_signed64, decode_time,
-        decode_unsigned64, encode_boolean, encode_date, encode_double, encode_enumerated,
-        encode_object_identifier, encode_octet_string, encode_real, encode_signed64, encode_time,
-        encode_unsigned64,
+        decode_bit_string, decode_boolean, decode_character_string, decode_date, decode_double,
+        decode_enumerated, decode_object_identifier, decode_octet_string, decode_real,
+        decode_signed64, decode_time, decode_unsigned64, encode_bit_string, encode_boolean,
+        encode_date, encode_double, encode_enumerated, encode_object_identifier,
+        encode_octet_string, encode_real, encode_signed64, encode_time, encode_unsigned64,
         tag::{ApplicationTagNumber, Tag, TagClass, TagValue},
         CharacterString, EncodingError,
     },
