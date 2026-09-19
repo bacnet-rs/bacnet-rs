@@ -137,7 +137,6 @@ use std::fmt;
 #[cfg(not(feature = "std"))]
 use alloc::{
     string::{String, ToString},
-    vec,
     vec::Vec,
 };
 
@@ -151,9 +150,10 @@ pub use character_string::{
     decode_character_string, encode_character_string, CharacterSet, CharacterString,
 };
 pub use integer::{
-    decode_context_signed, decode_context_unsigned, decode_signed, decode_signed64,
-    decode_unsigned, decode_unsigned64, encode_context_signed, encode_context_unsigned,
-    encode_signed, encode_signed64, encode_unsigned, encode_unsigned64,
+    decode_context_enumerated, decode_context_signed, decode_context_unsigned, decode_enumerated,
+    decode_signed, decode_signed64, decode_unsigned, decode_unsigned64, encode_context_enumerated,
+    encode_context_signed, encode_context_unsigned, encode_enumerated, encode_signed,
+    encode_signed64, encode_unsigned, encode_unsigned64,
 };
 
 use tag::{ApplicationTagNumber, Tag, TagClass, TagValue};
@@ -297,62 +297,6 @@ pub fn decode_octet_string(data: &[u8]) -> Result<(Vec<u8>, usize)> {
     let value = data[consumed..consumed + length].to_vec();
     consumed += length;
 
-    Ok((value, consumed))
-}
-
-/// Encode a BACnet enumerated value
-pub fn encode_enumerated(buffer: &mut Vec<u8>, value: u32) {
-    let bytes = if value <= 0xFF {
-        vec![value as u8]
-    } else if value <= 0xFFFF {
-        (value as u16).to_be_bytes().to_vec()
-    } else if value <= 0xFFFFFF {
-        let bytes = value.to_be_bytes();
-        bytes[1..].to_vec()
-    } else {
-        value.to_be_bytes().to_vec()
-    };
-
-    Tag {
-        number: ApplicationTagNumber::Enumerated as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(bytes.len() as u32),
-    }
-    .encode(buffer)
-    .expect("enumerated encodings are never longer than 4 octets");
-    buffer.extend_from_slice(&bytes);
-}
-
-/// Decode a BACnet enumerated value
-pub fn decode_enumerated(data: &[u8]) -> Result<(u32, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Enumerated as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-    let length = t.content_length().unwrap_or(0) as usize;
-
-    if data.len() < consumed + length {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let value = match length {
-        1 => data[consumed] as u32,
-        2 => u16::from_be_bytes([data[consumed], data[consumed + 1]]) as u32,
-        3 => {
-            let bytes = [0, data[consumed], data[consumed + 1], data[consumed + 2]];
-            u32::from_be_bytes(bytes)
-        }
-        4 => u32::from_be_bytes([
-            data[consumed],
-            data[consumed + 1],
-            data[consumed + 2],
-            data[consumed + 3],
-        ]),
-        _ => return Err(EncodingError::InvalidLength),
-    };
-
-    consumed += length;
     Ok((value, consumed))
 }
 
@@ -551,18 +495,6 @@ pub fn decode_context_tag(data: &[u8]) -> Result<(u8, usize, usize)> {
         TagValue::Primitive(length) => Ok((t.number as u8, length as usize, consumed)),
         TagValue::Opening | TagValue::Closing => Err(EncodingError::InvalidTag),
     }
-}
-
-/// Encode a context-specific enumerated value
-pub fn encode_context_enumerated(value: u32, tag_number: u8) -> Result<Vec<u8>> {
-    // Enumerated values use the same encoding as unsigned integers
-    encode_context_unsigned(value, tag_number)
-}
-
-/// Decode a context-specific enumerated value
-pub fn decode_context_enumerated(data: &[u8], expected_tag: u8) -> Result<(u32, usize)> {
-    // Enumerated values use the same decoding as unsigned integers
-    decode_context_unsigned(data, expected_tag)
 }
 
 /// Encode a context-specific object identifier
@@ -1758,6 +1690,8 @@ mod tests {
     use crate::ObjectType;
 
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
 
     #[test]
     fn test_encode_decode_boolean() {
@@ -1854,19 +1788,6 @@ mod tests {
         encode_octet_string(&mut buffer, &test_data).unwrap();
         let (decoded, _) = decode_octet_string(&buffer).unwrap();
         assert_eq!(decoded, test_data);
-    }
-
-    #[test]
-    fn test_encode_decode_enumerated() {
-        let mut buffer = Vec::new();
-        let test_values = [0, 1, 255, 256, 65535, 65536, 16777215];
-
-        for &test_value in &test_values {
-            buffer.clear();
-            encode_enumerated(&mut buffer, test_value);
-            let (value, _) = decode_enumerated(&buffer).unwrap();
-            assert_eq!(value, test_value);
-        }
     }
 
     #[test]

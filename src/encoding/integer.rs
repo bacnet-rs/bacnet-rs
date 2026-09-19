@@ -1,10 +1,12 @@
-//! BACnet Unsigned and Signed Integer encoding and decoding.
+//! BACnet Unsigned Integer, Signed Integer, and Enumerated encoding and
+//! decoding.
 //!
 //! This module implements ASHRAE 135-2024, Clause 20.2's "Encoding of an
-//! Unsigned Integer Value" and "Encoding of a Signed Integer Value":
+//! Unsigned Integer Value", "Encoding of a Signed Integer Value", and
+//! "Encoding of an Enumerated Value":
 //!
-//! - Both are primitive, with at least one contents octet, conveyed most
-//!   significant octet first.
+//! - All three are primitive, with at least one contents octet, conveyed
+//!   most significant octet first.
 //! - Unsigned integers are plain big-endian binary numbers, encoded in the
 //!   smallest number of octets possible — the first octet of a multi-octet
 //!   encoding is never `0x00`.
@@ -12,14 +14,18 @@
 //!   smallest number of octets possible — the first octet is never `0x00`
 //!   unless dropping it would flip the sign (i.e. the next octet's MSB is
 //!   1), and never `0xFF` unless dropping it would likewise flip the sign.
+//! - Enumerated values are worded identically to Unsigned Integer in the
+//!   standard (same range, same smallest-number-of-octets rule) — the only
+//!   difference is the application tag number (9 instead of 2), so this
+//!   module encodes/decodes them with the exact same logic as Unsigned.
 //!
-//! Both rules reduce to the same two operations regardless of the target
+//! These rules reduce to the same two operations regardless of the target
 //! width (`u32`/`u64` for unsigned, `i32`/`i64` for signed) or tag class
 //! (application or context): find the minimal big-endian byte sequence that
 //! round-trips to the value, and its inverse, zero- or sign-extending a
 //! byte sequence back to a value. This module implements each operation
 //! exactly once; every public function below is a thin wrapper that picks
-//! the right width and tag framing.
+//! the right width, tag number, and tag class.
 
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec};
@@ -276,6 +282,61 @@ pub fn decode_context_signed(data: &[u8], expected_tag: u8) -> Result<(i32, usiz
     Ok((value, tag_consumed + length))
 }
 
+/// Encode a BACnet enumerated value.
+///
+/// Clause 20.2's "Encoding of an Enumerated Value" is worded identically to
+/// "Encoding of an Unsigned Integer Value" (same range, same
+/// smallest-number-of-octets rule) — Enumerated is application tag 9
+/// instead of tag 2, nothing else differs, so this reuses the same minimal
+/// byte-width encoding.
+pub fn encode_enumerated(buffer: &mut Vec<u8>, value: u32) {
+    let bytes = minimal_unsigned_bytes(value as u64);
+    Tag {
+        number: ApplicationTagNumber::Enumerated as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(bytes.len() as u32),
+    }
+    .encode(buffer)
+    .expect("a u32 value never needs more than 4 octets");
+    buffer.extend_from_slice(&bytes);
+}
+
+/// Decode a BACnet enumerated value
+pub fn decode_enumerated(data: &[u8]) -> Result<(u32, usize)> {
+    let (t, mut consumed) = Tag::decode(data)?;
+
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Enumerated as u32 {
+        return Err(EncodingError::InvalidTag);
+    }
+    let length = t.content_length().unwrap_or(0) as usize;
+
+    if data.len() < consumed + length {
+        return Err(EncodingError::BufferUnderflow);
+    }
+    if !(1..=4).contains(&length) {
+        return Err(EncodingError::InvalidLength);
+    }
+
+    let value = decode_unsigned_content(&data[consumed..consumed + length]) as u32;
+
+    consumed += length;
+    Ok((value, consumed))
+}
+
+/// Encode a context-specific enumerated value.
+///
+/// Enumerated values use the same encoding as unsigned integers.
+pub fn encode_context_enumerated(value: u32, tag_number: u8) -> Result<Vec<u8>> {
+    encode_context_unsigned(value, tag_number)
+}
+
+/// Decode a context-specific enumerated value.
+///
+/// Enumerated values use the same decoding as unsigned integers.
+pub fn decode_context_enumerated(data: &[u8], expected_tag: u8) -> Result<(u32, usize)> {
+    decode_context_unsigned(data, expected_tag)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +391,49 @@ mod tests {
         assert_eq!(buffer, [0xF9, 0x21, 0xB8]);
         let (value, consumed) = decode_context_signed(&buffer, 33).unwrap();
         assert_eq!(value, -72);
+        assert_eq!(consumed, buffer.len());
+    }
+
+    #[test]
+    fn spec_application_enumerated_analog_input() {
+        // BACnetObjectType ANALOG-INPUT (0) -> Encoded Tag X'91', Data X'00'
+        let mut buffer = Vec::new();
+        encode_enumerated(&mut buffer, 0);
+        assert_eq!(buffer, [0x91, 0x00]);
+        let (value, consumed) = decode_enumerated(&buffer).unwrap();
+        assert_eq!(value, 0);
+        assert_eq!(consumed, buffer.len());
+    }
+
+    #[test]
+    fn enumerated_round_trip_and_byte_width() {
+        for &(value, expected_len) in &[
+            (0u32, 1),
+            (255, 1),
+            (256, 2),
+            (65535, 2),
+            (65536, 3),
+            (16_777_215, 3),
+            (16_777_216, 4),
+            (u32::MAX, 4),
+        ] {
+            let mut buffer = Vec::new();
+            encode_enumerated(&mut buffer, value);
+            let (tag, _) = Tag::decode(&buffer).unwrap();
+            assert_eq!(tag.content_length(), Some(expected_len));
+            let (decoded, consumed) = decode_enumerated(&buffer).unwrap();
+            assert_eq!(decoded, value);
+            assert_eq!(consumed, buffer.len());
+        }
+    }
+
+    #[test]
+    fn context_enumerated_delegates_to_unsigned() {
+        let buffer = encode_context_enumerated(65536, 3).unwrap();
+        let via_unsigned = encode_context_unsigned(65536, 3).unwrap();
+        assert_eq!(buffer, via_unsigned);
+        let (value, consumed) = decode_context_enumerated(&buffer, 3).unwrap();
+        assert_eq!(value, 65536);
         assert_eq!(consumed, buffer.len());
     }
 
