@@ -144,6 +144,7 @@ use crate::object::ObjectIdentifier;
 
 pub mod character_string;
 pub mod integer;
+pub mod octet_string;
 pub mod real;
 pub mod tag;
 
@@ -156,6 +157,7 @@ pub use integer::{
     encode_context_signed, encode_context_unsigned, encode_enumerated, encode_signed,
     encode_signed64, encode_unsigned, encode_unsigned64,
 };
+pub use octet_string::{decode_octet_string, encode_octet_string};
 pub use real::{decode_double, decode_real, encode_double, encode_real};
 
 use tag::{ApplicationTagNumber, Tag, TagClass, TagValue};
@@ -232,36 +234,8 @@ pub fn decode_boolean(data: &[u8]) -> Result<(bool, usize)> {
     Ok((value, consumed))
 }
 
-/// Encode a BACnet octet string
-pub fn encode_octet_string(buffer: &mut Vec<u8>, value: &[u8]) -> Result<()> {
-    Tag {
-        number: ApplicationTagNumber::OctetString as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(value.len() as u32),
-    }
-    .encode(buffer)?;
-    buffer.extend_from_slice(value);
-    Ok(())
-}
-
-/// Decode a BACnet octet string
-pub fn decode_octet_string(data: &[u8]) -> Result<(Vec<u8>, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::OctetString as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-    let length = t.content_length().unwrap_or(0) as usize;
-
-    if data.len() < consumed + length {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let value = data[consumed..consumed + length].to_vec();
-    consumed += length;
-
-    Ok((value, consumed))
-}
+// `encode_octet_string`/`decode_octet_string` live in the `octet_string`
+// module (re-exported above).
 
 /// Encode a BACnet date
 pub fn encode_date(buffer: &mut Vec<u8>, year: u16, month: u8, day: u8, weekday: u8) -> Result<()> {
@@ -1679,16 +1653,6 @@ mod tests {
             let (value, _) = decode_character_string(&buffer).unwrap();
             assert_eq!(value.to_str().unwrap(), test_string);
         }
-    }
-
-    #[test]
-    fn test_encode_decode_octet_string() {
-        let mut buffer = Vec::new();
-        let test_data = vec![0x01, 0x02, 0x03, 0xFF, 0x00];
-
-        encode_octet_string(&mut buffer, &test_data).unwrap();
-        let (decoded, _) = decode_octet_string(&buffer).unwrap();
-        assert_eq!(decoded, test_data);
     }
 
     #[test]
