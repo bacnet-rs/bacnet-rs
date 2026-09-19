@@ -170,7 +170,10 @@ use std::fmt;
 use core::fmt;
 
 #[cfg(not(feature = "std"))]
-use alloc::{format, string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 /// Result type for service operations
 #[cfg(feature = "std")]
@@ -2250,6 +2253,8 @@ impl UtcTimeSynchronizationRequest {
 mod tests {
     use super::*;
     use crate::object::{ObjectIdentifier, ObjectType};
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
 
     #[test]
     fn test_whois_request() {

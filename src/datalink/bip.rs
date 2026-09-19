@@ -35,6 +35,8 @@
 //! ## Basic BACnet/IP Communication
 //!
 //! ```no_run
+//! # #[cfg(feature = "std")]
+//! # {
 //! use bacnet_rs::datalink::bip::{BacnetIpDataLink, BvlcFunction};
 //! use bacnet_rs::datalink::{DataLink, DataLinkAddress};
 //!
@@ -51,11 +53,14 @@
 //! data_link.send_frame(&npdu, &DataLinkAddress::Broadcast)?;
 //! # Ok(())
 //! # }
+//! # }
 //! ```
 //!
 //! ## Foreign Device Registration
 //!
 //! ```no_run
+//! # #[cfg(feature = "std")]
+//! # {
 //! use bacnet_rs::datalink::bip::BacnetIpDataLink;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,6 +70,7 @@
 //! let bbmd_addr = "192.168.1.10:47808".parse()?;
 //! data_link.register_foreign_device(bbmd_addr, 300)?;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 

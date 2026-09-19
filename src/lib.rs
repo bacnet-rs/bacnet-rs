@@ -18,6 +18,8 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
+//! # #[cfg(feature = "std")]
+//! # mod std_only {
 //! use bacnet_rs::client::BacnetClient;
 //! use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 //!
@@ -36,6 +38,7 @@
 //!
 //!     Ok(())
 //! }
+//! # }
 //! ```
 //!
 //! ## Architecture

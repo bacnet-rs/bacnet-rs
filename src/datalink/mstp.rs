@@ -32,9 +32,11 @@ use std::{
 };
 
 #[cfg(not(feature = "std"))]
-use alloc::{collections::VecDeque, string::String, vec::Vec};
+use alloc::vec::Vec;
 
-use crate::datalink::{DataLink, DataLinkAddress, DataLinkError, DataLinkType, Result};
+#[cfg(feature = "std")]
+use crate::datalink::{DataLink, DataLinkAddress, DataLinkType};
+use crate::datalink::{DataLinkError, Result};
 use crate::util::crc16_mstp;
 
 /// MS/TP frame preamble bytes
@@ -581,6 +583,8 @@ pub fn is_slave_node(address: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
 
     #[test]
     fn test_mstp_frame_encode_decode() {

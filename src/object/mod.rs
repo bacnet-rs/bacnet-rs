@@ -84,6 +84,8 @@
 //! ## Object Database Usage
 //!
 //! ```rust,no_run
+//! # #[cfg(feature = "std")]
+//! # {
 //! use bacnet_rs::object::{database::ObjectDatabase, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, analog::AnalogInput, Device};
 //!
 //! // Create a device and object database
@@ -106,6 +108,7 @@
 //! // Read properties
 //! let name = db.get_property(obj_id, PropertyIdentifier::ObjectName)
 //!     .expect("Property not found");
+//! # }
 //! ```
 //!
 //! # Standards Compliance
@@ -129,7 +132,12 @@ use std::fmt;
 use core::fmt;
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 /// Result type for object operations
 #[cfg(feature = "std")]
@@ -223,7 +231,7 @@ impl From<u32> for ObjectIdentifier {
 impl TryFrom<ObjectIdentifier> for u32 {
     type Error = EncodingError;
 
-    fn try_from(value: ObjectIdentifier) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: ObjectIdentifier) -> core::result::Result<Self, Self::Error> {
         let object_type: u32 = value.object_type.into();
 
         if object_type > 0x3FF || value.instance > 0x3FFFFF {
@@ -583,7 +591,7 @@ impl TryFrom<u32> for Segmentation {
 }
 
 impl Display for Segmentation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Both => write!(f, "Both"),
             Self::Transmit => write!(f, "Transmit"),

@@ -1721,6 +1721,8 @@ pub fn format_vendor_display(vendor_id: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
 
     #[test]
     fn test_get_vendor_name() {

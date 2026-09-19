@@ -135,7 +135,11 @@ use core::fmt;
 use std::fmt;
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 use crate::object::ObjectIdentifier;
 
@@ -1005,7 +1009,7 @@ pub fn decode_context_boolean(data: &[u8], expected_tag: u8) -> Result<(bool, us
 pub mod advanced {
     use super::*;
     #[cfg(not(feature = "std"))]
-    use alloc::{collections::BTreeMap, vec::Vec};
+    use alloc::vec::Vec;
 
     /// Buffer manager for efficient encoding/decoding operations
     #[derive(Debug)]
@@ -1804,7 +1808,7 @@ impl EncodingAnalyzer {
         if let Some(pattern) = self
             .error_patterns
             .iter_mut()
-            .find(|p| std::mem::discriminant(&p.error_type) == std::mem::discriminant(&error))
+            .find(|p| core::mem::discriminant(&p.error_type) == core::mem::discriminant(&error))
         {
             pattern.count += 1;
             #[cfg(feature = "std")]
@@ -1848,7 +1852,7 @@ impl EncodingAnalyzer {
             .iter()
             .map(|p| (&p.error_type, p.count))
             .collect();
-        errors.sort_by_key(|b| std::cmp::Reverse(b.1));
+        errors.sort_by_key(|b| core::cmp::Reverse(b.1));
         errors.truncate(limit);
         errors
     }
@@ -2206,7 +2210,7 @@ mod tests {
             0.0,
             1.0,
             -1.0,
-            std::f32::consts::PI,
+            core::f32::consts::PI,
             -273.15,
             f32::MAX,
             f32::MIN,
@@ -2298,7 +2302,7 @@ mod tests {
             0.0,
             1.0,
             -1.0,
-            std::f64::consts::PI,
+            core::f64::consts::PI,
             -273.15,
             f64::MAX,
             f64::MIN,
@@ -2381,7 +2385,7 @@ mod tests {
         // Test fast encoding
         encoder.encode_unsigned_fast(42).unwrap();
         encoder.encode_boolean_fast(true).unwrap();
-        encoder.encode_real_fast(std::f32::consts::PI).unwrap();
+        encoder.encode_real_fast(core::f32::consts::PI).unwrap();
 
         let data = encoder.data();
         assert!(!data.is_empty());

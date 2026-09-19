@@ -52,7 +52,11 @@
 //! re-encoded byte for byte in its original charset.
 
 #[cfg(not(feature = "std"))]
-use alloc::{format, string::String, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use super::{
     tag::{ApplicationTagNumber, Tag, TagClass, TagValue},
@@ -515,6 +519,8 @@ fn windows_codepage_encoding(code_page: u16) -> Option<&'static encoding_rs::Enc
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
 
     fn assert_decodes_to(data: &[u8], expected_text: &str, expected_charset: CharacterSet) {
         let (value, consumed) = decode_character_string(data).unwrap();

@@ -192,11 +192,14 @@
 pub mod enum_macros;
 
 // Debug formatting utilities
-#[cfg(not(feature = "std"))]
-use core::fmt;
 
 #[cfg(not(feature = "std"))]
-use alloc::{format, string::String, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 #[cfg(feature = "std")]
 use std::{
@@ -207,6 +210,9 @@ use std::{
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as HashMap;
+
+#[cfg(not(feature = "std"))]
+use core::time::Duration;
 
 /// Calculate CRC-16 for MS/TP frames
 ///
@@ -659,6 +665,7 @@ pub mod statistics {
         pub device_id: u32,
         pub address: String,
         pub comm_stats: CommunicationStats,
+        #[cfg(feature = "std")]
         pub last_seen: Option<Instant>,
         pub response_times_ms: Vec<f64>,
         pub online: bool,
@@ -872,7 +879,11 @@ impl RetryConfig {
         let delay_ms = if attempt == 0 {
             self.initial_delay_ms
         } else {
-            let delay = self.initial_delay_ms as f64 * self.backoff_multiplier.powi(attempt as i32);
+            #[cfg(feature = "std")]
+            let backoff = self.backoff_multiplier.powi(attempt as i32);
+            #[cfg(not(feature = "std"))]
+            let backoff = libm::pow(self.backoff_multiplier, attempt as f64);
+            let delay = self.initial_delay_ms as f64 * backoff;
             delay.min(self.max_delay_ms as f64) as u64
         };
 
@@ -1131,8 +1142,7 @@ pub mod debug {
     /// Create a detailed hex dump with annotations
     pub fn annotated_hex_dump(data: &[u8], annotations: &[(usize, String)]) -> String {
         let mut result = String::new();
-        let mut annotation_map: std::collections::HashMap<usize, String> =
-            annotations.iter().cloned().collect();
+        let mut annotation_map: HashMap<usize, String> = annotations.iter().cloned().collect();
 
         for (i, chunk) in data.chunks(16).enumerate() {
             let offset = i * 16;

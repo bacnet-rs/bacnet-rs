@@ -72,9 +72,12 @@
 use std::sync::{Arc, Mutex};
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 
-use crate::datalink::{DataLink, DataLinkAddress, DataLinkError, DataLinkType, Result};
+#[cfg(feature = "std")]
+#[cfg(feature = "std")]
+use crate::datalink::{DataLink, DataLinkAddress, DataLinkType};
+use crate::datalink::{DataLinkError, Result};
 
 /// Ethernet broadcast MAC address (all ones).
 ///
@@ -334,6 +337,8 @@ impl EthernetFrame {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "std")]
+    /// # {
     /// use bacnet_rs::datalink::ethernet::EthernetFrame;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -360,6 +365,7 @@ impl EthernetFrame {
     /// let frame = EthernetFrame::decode(&frame_data)?;
     /// assert!(frame.is_broadcast());
     /// # Ok(())
+    /// # }
     /// # }
     /// ```
     pub fn decode(data: &[u8]) -> Result<Self> {
@@ -697,6 +703,8 @@ impl DataLink for EthernetDataLink {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "std")]
+/// # {
 /// use bacnet_rs::datalink::ethernet::parse_mac_address;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -712,6 +720,7 @@ impl DataLink for EthernetDataLink {
 /// assert!(parse_mac_address("00-11-22-33-44-55").is_err());
 /// assert!(parse_mac_address("00:11:22:33:44:GG").is_err());
 /// # Ok(())
+/// # }
 /// # }
 /// ```
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6]> {
@@ -785,6 +794,8 @@ pub fn format_mac_address(mac: &[u8; 6]) -> String {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "std")]
+/// # {
 /// use bacnet_rs::datalink::ethernet::{validate_ethernet_frame, EthernetFrame};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -798,6 +809,7 @@ pub fn format_mac_address(mac: &[u8; 6]) -> String {
 /// let encoded = frame.encode();
 /// validate_ethernet_frame(&encoded)?;
 /// # Ok(())
+/// # }
 /// # }
 /// ```
 pub fn validate_ethernet_frame(data: &[u8]) -> Result<()> {
@@ -828,6 +840,8 @@ pub fn validate_ethernet_frame(data: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
 
     #[test]
     fn test_ethernet_frame_encode_decode() {

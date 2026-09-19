@@ -15,7 +15,7 @@
 //! and `Device_Object_Functions()` APIs (bacnet-stack commit 5b7932ee6).
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 
 use crate::object::{ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue, Result};
 
@@ -341,6 +341,8 @@ impl DeviceObject {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::{string::ToString, vec};
 
     // Mock functions for testing
     fn mock_count() -> usize {

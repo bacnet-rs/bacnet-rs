@@ -54,6 +54,8 @@
 //! ## Creating a BACnet/IP Data Link
 //!
 //! ```no_run
+//! # #[cfg(feature = "std")]
+//! # {
 //! use bacnet_rs::datalink::{BacnetIpDataLink, DataLink, DataLinkAddress};
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -68,6 +70,7 @@
 //! // Send a broadcast frame
 //! data_link.send_frame(&frame_data, &DataLinkAddress::Broadcast)?;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!
@@ -314,12 +317,15 @@ pub enum DataLinkType {
 /// ## Using the Trait
 ///
 /// ```
+/// # #[cfg(feature = "std")]
+/// # {
 /// use bacnet_rs::datalink::{DataLink, DataLinkAddress};
 ///
 /// fn send_broadcast(data_link: &mut dyn DataLink, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
 ///     data_link.send_frame(data, &DataLinkAddress::Broadcast)?;
 ///     Ok(())
 /// }
+/// # }
 /// ```
 pub trait DataLink: Send + Sync {
     /// Send a frame to the specified destination address.
@@ -394,6 +400,8 @@ pub trait DataLink: Send + Sync {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "std")]
+    /// # {
     /// use bacnet_rs::datalink::{DataLink, DataLinkAddress};
     ///
     /// fn print_local_address(data_link: &dyn DataLink) {
@@ -404,6 +412,7 @@ pub trait DataLink: Send + Sync {
     ///         _ => println!("Other address type"),
     ///     }
     /// }
+    /// # }
     /// ```
     fn local_address(&self) -> DataLinkAddress;
 }

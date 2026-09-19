@@ -979,6 +979,8 @@ pub mod timeout_utils {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
 
     #[test]
     fn test_bvll_header_encode_decode() {
@@ -1030,6 +1032,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn test_broadcast_manager() {
         let mut manager = BroadcastManager::new();
 

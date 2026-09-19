@@ -12,6 +12,14 @@
 //! - Protocol-specific checks
 //! - Common error detection patterns
 
+#[cfg(not(feature = "std"))]
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+
 use crate::datalink::DataLinkType;
 use crate::util::crc16_mstp;
 
@@ -490,7 +498,11 @@ fn calculate_frame_statistics(data: &[u8]) -> FrameStatistics {
     for count in byte_distribution.iter() {
         if *count > 0 {
             let probability = *count as f64 / total;
-            entropy -= probability * probability.log2();
+            #[cfg(feature = "std")]
+            let log2_probability = probability.log2();
+            #[cfg(not(feature = "std"))]
+            let log2_probability = libm::log2(probability);
+            entropy -= probability * log2_probability;
         }
     }
 
