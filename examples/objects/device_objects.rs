@@ -6,6 +6,7 @@
 use bacnet_rs::{
     app::{Apdu, MaxApduSize, MaxSegments},
     encoding::{
+        character_string::decode_character_string,
         decode_object_identifier,
         tag::{ApplicationTagNumber, Tag, TagClass, TagValue},
     },
@@ -1118,37 +1119,9 @@ fn parse_rpm_response(
 /// Extract character string from BACnet encoded data
 #[allow(dead_code)]
 fn extract_character_string(data: &[u8]) -> Option<(String, usize)> {
-    let (tag, consumed) = Tag::decode(data).ok()?;
-    if tag.class != TagClass::Application
-        || tag.number != u32::from(ApplicationTagNumber::CharacterString)
-    {
-        return None;
-    }
-
-    let length = tag.content_length()? as usize;
-    if length == 0 || data.len() < consumed + length {
-        return None;
-    }
-
-    let encoding = data[consumed];
-    let string_data = &data[consumed + 1..consumed + length];
-
-    let string = match encoding {
-        4 => {
-            // ISO 10646 UCS-2 (UTF-16)
-            let utf16_chars: Vec<u16> = string_data
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|chunk| u16::from_be_bytes(*chunk))
-                .collect();
-            String::from_utf16_lossy(&utf16_chars)
-        }
-        // ANSI X3.4 (ASCII) / ISO 10646 UTF-8, and any other encoding as a fallback
-        _ => String::from_utf8_lossy(string_data).to_string(),
-    };
-
-    Some((string, consumed + length))
+    decode_character_string(data)
+        .ok()
+        .map(|(value, consumed)| (value.to_string_lossy().into_owned(), consumed))
 }
 
 /// Extract present value based on object type

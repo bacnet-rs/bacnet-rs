@@ -139,7 +139,12 @@ use alloc::{string::String, vec::Vec};
 
 use crate::object::ObjectIdentifier;
 
+pub mod character_string;
 pub mod tag;
+
+pub use character_string::{
+    decode_character_string, encode_character_string, CharacterSet, CharacterString,
+};
 
 use tag::{ApplicationTagNumber, Tag, TagClass, TagValue};
 
@@ -521,47 +526,6 @@ pub fn decode_octet_string(data: &[u8]) -> Result<(Vec<u8>, usize)> {
 
     let value = data[consumed..consumed + length].to_vec();
     consumed += length;
-
-    Ok((value, consumed))
-}
-
-/// Encode a BACnet character string
-pub fn encode_character_string(buffer: &mut Vec<u8>, value: &str) -> Result<()> {
-    let string_bytes = value.as_bytes();
-    Tag {
-        number: ApplicationTagNumber::CharacterString as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(string_bytes.len() as u32 + 1),
-    }
-    .encode(buffer)?;
-    buffer.push(0); // Character set encoding (0 = ANSI X3.4)
-    buffer.extend_from_slice(string_bytes);
-    Ok(())
-}
-
-/// Decode a BACnet character string
-pub fn decode_character_string(data: &[u8]) -> Result<(String, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::CharacterString as u32
-    {
-        return Err(EncodingError::InvalidTag);
-    }
-    let length = t.content_length().unwrap_or(0) as usize;
-
-    if data.len() < consumed + length || length == 0 {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    // Skip character set encoding byte
-    let _encoding = data[consumed];
-    consumed += 1;
-
-    let string_data = &data[consumed..consumed + length - 1];
-    let value = String::from_utf8(string_data.to_vec())
-        .map_err(|_| EncodingError::InvalidFormat("Invalid UTF-8 string".to_string()))?;
-
-    consumed += length - 1;
 
     Ok((value, consumed))
 }
@@ -1471,8 +1435,19 @@ impl EncodableValue for &str {
 
     fn encode_context_to(&self, tag_number: u8, buffer: &mut Vec<u8>) -> Result<()> {
         encode_context_tag(buffer, tag_number, self.len() + 1)?;
-        buffer.push(0); // Character set
-        buffer.extend_from_slice(self.as_bytes());
+        character_string::encode_utf8_content(buffer, self);
+        Ok(())
+    }
+}
+
+impl EncodableValue for CharacterString {
+    fn encode_to(&self, _tag: ApplicationTagNumber, buffer: &mut Vec<u8>) -> Result<()> {
+        self.encode(buffer)
+    }
+
+    fn encode_context_to(&self, tag_number: u8, buffer: &mut Vec<u8>) -> Result<()> {
+        encode_context_tag(buffer, tag_number, self.content_len())?;
+        self.encode_content(buffer);
         Ok(())
     }
 }
@@ -1546,7 +1521,7 @@ impl<'a> DecodingStream<'a> {
     }
 
     /// Decode a character string
-    pub fn decode_character_string(&mut self) -> Result<String> {
+    pub fn decode_character_string(&mut self) -> Result<CharacterString> {
         let (value, consumed) = decode_character_string(&self.data[self.position..])?;
         self.position += consumed;
         Ok(value)
@@ -2254,7 +2229,7 @@ mod tests {
             buffer.clear();
             encode_character_string(&mut buffer, test_string).unwrap();
             let (value, _) = decode_character_string(&buffer).unwrap();
-            assert_eq!(value, test_string);
+            assert_eq!(value.to_str().unwrap(), test_string);
         }
     }
 

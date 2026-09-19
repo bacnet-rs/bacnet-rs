@@ -178,7 +178,7 @@ pub fn decode_property_value(data: &[u8]) -> Result<(PropertyValue, usize), Enco
         }
         ApplicationTagNumber::CharacterString => {
             let (value, consumed) = decode_character_string(data)?;
-            Ok((PropertyValue::CharacterString(value), consumed))
+            Ok((PropertyValue::CharacterString(value.try_into()?), consumed))
         }
         ApplicationTagNumber::BitString => {
             let (value, consumed) = decode_bit_string(data)?;

@@ -6,6 +6,7 @@
 use bacnet_rs::{
     datalink::bip::{BvlcFunction, BvlcHeader},
     encoding::{
+        character_string::decode_character_string,
         decode_unsigned, encode_context_enumerated, encode_context_object_id,
         encode_context_unsigned,
         tag::{ApplicationTagNumber, Tag, TagClass, TagValue},
@@ -670,16 +671,11 @@ fn extract_string_value(data: &[u8]) -> Result<String, Box<dyn std::error::Error
         return Ok("(empty)".to_string());
     }
 
-    if let Ok((tag, consumed)) = Tag::decode(data) {
+    if let Ok((tag, _consumed)) = Tag::decode(data) {
         if tag.class == TagClass::Application {
             if tag.number == u32::from(ApplicationTagNumber::CharacterString) {
-                if let Some(length) = tag.content_length() {
-                    let length = length as usize;
-                    // First content octet is the character-set byte.
-                    if length >= 1 && data.len() >= consumed + length {
-                        let string_data = &data[consumed + 1..consumed + length];
-                        return Ok(String::from_utf8_lossy(string_data).to_string());
-                    }
+                if let Ok((value, _consumed)) = decode_character_string(data) {
+                    return Ok(value.to_string_lossy().into_owned());
                 }
             } else if tag.number == u32::from(ApplicationTagNumber::UnsignedInt) {
                 if let Ok((value, _)) = decode_unsigned(data) {

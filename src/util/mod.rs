@@ -1044,52 +1044,16 @@ pub mod debug {
     }
 
     /// Formats a character string, honoring its character-set byte.
-    ///
-    /// This decodes the tag framing via [`crate::encoding::tag::Tag`] rather
-    /// than [`crate::encoding::decode_character_string`], because the latter
-    /// only supports UTF-8 content; debug output should still be readable
-    /// for UCS-2 (UTF-16) strings, which BACnet devices do send.
     fn format_character_string(data: &[u8]) -> String {
-        use crate::encoding::tag::Tag;
+        use crate::encoding::character_string::{decode_character_string, CharacterSet};
 
-        let (tag, consumed) = match Tag::decode(data) {
-            Ok(t) => t,
-            Err(_) => return "CharString(invalid)".to_string(),
-        };
-
-        let length = match tag.content_length() {
-            Some(length) => length as usize,
-            None => return "CharString(invalid)".to_string(),
-        };
-
-        if length == 0 || data.len() < consumed + length {
-            return "CharString(invalid length)".to_string();
+        match decode_character_string(data) {
+            Ok((value, _)) if value.charset() == CharacterSet::Utf8 => {
+                format!("CharString(\"{}\")", value)
+            }
+            Ok((value, _)) => format!("CharString(\"{}\", {:?})", value, value.charset()),
+            Err(e) => format!("CharString(invalid: {})", e),
         }
-
-        let encoding = data[consumed];
-        let string_data = &data[consumed + 1..consumed + length];
-
-        let decoded = match encoding {
-            0 => {
-                // ANSI X3.4 (ASCII) / ISO 10646 UTF-8
-                String::from_utf8_lossy(string_data).to_string()
-            }
-            4 => {
-                // ISO 10646 UCS-2 (UTF-16)
-                let utf16_chars: Vec<u16> = string_data
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|chunk| u16::from_be_bytes(*chunk))
-                    .collect();
-                String::from_utf16_lossy(&utf16_chars)
-            }
-            _ => {
-                return format!("CharString(<encoding={}>)", encoding);
-            }
-        };
-
-        format!("CharString(\"{}\")", decoded)
     }
 
     fn format_octet_string(data: &[u8]) -> String {

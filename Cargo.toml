@@ -41,6 +41,10 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 async-trait = { version = "0.1", optional = true }
 pastey = "0.2.1"
 
+# Legacy BACnet CharacterString charsets (DBCS code pages, JIS X 0208)
+encoding_rs = { version = "0.8", optional = true }
+oem_cp = { version = "2.1", optional = true }
+
 [dev-dependencies]
 criterion = "0.5"
 proptest = "1.5"
@@ -61,6 +65,7 @@ std = [
 ]
 async = ["tokio", "async-trait", "std"]
 no-std = []
+legacy-charsets = ["encoding_rs", "oem_cp"]
 
 # Basic examples
 [[example]]
