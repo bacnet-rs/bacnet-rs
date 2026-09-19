@@ -5,6 +5,10 @@
 
 use bacnet_rs::{
     app::{Apdu, MaxApduSize, MaxSegments},
+    encoding::{
+        decode_object_identifier,
+        tag::{ApplicationTagNumber, Tag, TagClass, TagValue},
+    },
     network::Npdu,
     object::{EngineeringUnits, ObjectIdentifier, ObjectType, PropertyIdentifier},
     property::decode_units,
@@ -912,23 +916,27 @@ fn parse_object_list_response(
     let mut objects = Vec::new();
     let mut pos = 0;
 
-    // Simple approach - scan for all object identifiers
-    while pos + 5 <= data.len() {
-        if data[pos] == 0xC4 {
-            // Application tag for object identifier
-            pos += 1;
-            let obj_id_bytes = [data[pos], data[pos + 1], data[pos + 2], data[pos + 3]];
-            let obj_id = u32::from_be_bytes(obj_id_bytes);
-            let obj_id: ObjectIdentifier = obj_id.into();
+    // Simple approach - scan for all application-tagged object identifiers
+    while pos < data.len() {
+        let is_object_id_tag = matches!(
+            Tag::decode(&data[pos..]),
+            Ok((tag, _))
+                if tag.class == TagClass::Application
+                    && tag.number == u32::from(ApplicationTagNumber::ObjectIdentifier)
+                    && tag.content_length() == Some(4)
+        );
 
-            // Skip the device object itself
-            if obj_id.object_type == ObjectType::Device {
-                pos += 4;
-                continue;
+        if is_object_id_tag {
+            match decode_object_identifier(&data[pos..]) {
+                Ok((obj_id, consumed)) => {
+                    // Skip the device object itself
+                    if obj_id.object_type != ObjectType::Device {
+                        objects.push(obj_id);
+                    }
+                    pos += consumed;
+                }
+                Err(_) => pos += 1,
             }
-
-            objects.push(obj_id);
-            pos += 4;
         } else {
             pos += 1;
         }
@@ -957,9 +965,29 @@ fn parse_rpm_response(
     // Debug: comment out for clean output
     // println!("Debug: Parsing RPM response with {} bytes for {} objects", data.len(), objects.len());
 
+    // Peeks the tag at `pos` without consuming anything.
+    let peek_tag = |data: &[u8], pos: usize| -> Option<Tag> {
+        Tag::decode(&data[pos..]).ok().map(|(tag, _)| tag)
+    };
+
+    // Is `tag` a primitive context-specific tag with the given number?
+    let is_context = |tag: Option<Tag>, number: u32| {
+        matches!(
+            tag,
+            Some(Tag {
+                class: TagClass::Context,
+                number: n,
+                value: TagValue::Primitive(_)
+            }) if n == number
+        )
+    };
+    let is_opening = |tag: Option<Tag>, number: u32| tag == Tag::opening(number).ok();
+    let is_closing = |tag: Option<Tag>, number: u32| tag == Tag::closing(number).ok();
+    let is_application = |tag: Option<Tag>, number: ApplicationTagNumber| matches!(tag, Some(t) if t.class == TagClass::Application && t.number == u32::from(number));
+
     while pos < data.len() && current_obj_index < objects_info.len() {
-        // Look for object identifier context tag (0x0C)
-        while pos < data.len() && data[pos] != 0x0C {
+        // Look for the object identifier context tag (context tag 0)
+        while pos < data.len() && !is_context(peek_tag(data, pos), 0) {
             pos += 1;
         }
 
@@ -969,8 +997,8 @@ fn parse_rpm_response(
 
         pos += 5; // Skip object identifier
 
-        // Look for property results opening tag (0x1E)
-        while pos < data.len() && data[pos] != 0x1E {
+        // Look for property results opening tag (context tag 1)
+        while pos < data.len() && !is_opening(peek_tag(data, pos), 1) {
             pos += 1;
         }
 
@@ -984,21 +1012,22 @@ fn parse_rpm_response(
         // This device seems to send: Object_Name, Present_Value, Units (for analog objects)
 
         // First property: Object_Name (character string)
-        if pos < data.len() && data[pos] == 0x29 {
+        if pos < data.len() && is_context(peek_tag(data, pos), 2) {
             // Skip property error/success tag
             pos += 1;
         }
-        if pos < data.len() && data[pos] == 0x4D {
+        if pos < data.len() && is_context(peek_tag(data, pos), 4) {
             // Another tag
             pos += 1;
         }
-        if pos < data.len() && data[pos] == 0x4E {
+        if pos < data.len() && is_opening(peek_tag(data, pos), 4) {
             // Property value opening tag
             pos += 1;
         }
 
-        if pos < data.len() && data[pos] == 0x75 {
-            // Character string tag
+        if pos < data.len()
+            && is_application(peek_tag(data, pos), ApplicationTagNumber::CharacterString)
+        {
             if let Some((name, consumed)) = extract_character_string(&data[pos..]) {
                 // Debug: comment out for clean output
                 // println!("Debug: Extracted object name: '{}'", name);
@@ -1008,19 +1037,24 @@ fn parse_rpm_response(
         }
 
         // Skip any intermediate tags and look for present value
-        while pos < data.len() && data[pos] != 0x44 && data[pos] != 0x11 && data[pos] != 0x1F {
+        while pos < data.len() && {
+            let tag = peek_tag(data, pos);
+            !is_application(tag, ApplicationTagNumber::Real)
+                && !is_application(tag, ApplicationTagNumber::Boolean)
+                && !is_closing(tag, 1)
+        } {
             pos += 1;
         }
 
         // Present value (real for analog, boolean for binary)
+        let present_value_tag = peek_tag(data, pos);
         match objects_info[current_obj_index]
             .object_identifier
             .object_type
         {
             ObjectType::AnalogInput | ObjectType::AnalogOutput | ObjectType::AnalogValue
-                if pos < data.len() && data[pos] == 0x44 =>
+                if is_application(present_value_tag, ApplicationTagNumber::Real) =>
             {
-                // Real value tag
                 if let Some((value, consumed)) = extract_present_value(
                     &data[pos..],
                     objects_info[current_obj_index]
@@ -1032,9 +1066,8 @@ fn parse_rpm_response(
                 }
             }
             ObjectType::BinaryInput | ObjectType::BinaryOutput | ObjectType::BinaryValue
-                if pos < data.len() && data[pos] == 0x11 =>
+                if is_application(present_value_tag, ApplicationTagNumber::Boolean) =>
             {
-                // Boolean value tag
                 if let Some((value, consumed)) = extract_present_value(
                     &data[pos..],
                     objects_info[current_obj_index]
@@ -1048,14 +1081,16 @@ fn parse_rpm_response(
             _ => {}
         }
 
-        // Skip any intermediate content and look for units (enumerated tag 0x91)
-        while pos < data.len() && data[pos] != 0x91 && data[pos] != 0x1F {
+        // Skip any intermediate content and look for units (enumerated tag)
+        while pos < data.len() && {
+            let tag = peek_tag(data, pos);
+            !is_application(tag, ApplicationTagNumber::Enumerated) && !is_closing(tag, 1)
+        } {
             pos += 1;
         }
 
         // Units (for analog objects)
-        if pos < data.len() && data[pos] == 0x91 {
-            // Enumerated tag
+        if is_application(peek_tag(data, pos), ApplicationTagNumber::Enumerated) {
             if let Some((units, consumed)) = decode_units(&data[pos..]) {
                 // Debug: comment out for clean output
                 // println!("Debug: Extracted units: '{}'", units);
@@ -1064,11 +1099,11 @@ fn parse_rpm_response(
             }
         }
 
-        // Find closing tag 0x1F
-        while pos < data.len() && data[pos] != 0x1F {
+        // Find the closing tag (context tag 1)
+        while pos < data.len() && !is_closing(peek_tag(data, pos), 1) {
             pos += 1;
         }
-        if pos < data.len() && data[pos] == 0x1F {
+        if is_closing(peek_tag(data, pos), 1) {
             pos += 1; // Skip closing tag
         }
 
@@ -1082,32 +1117,25 @@ fn parse_rpm_response(
 
 /// Extract character string from BACnet encoded data
 #[allow(dead_code)]
-#[allow(clippy::manual_is_multiple_of)]
 fn extract_character_string(data: &[u8]) -> Option<(String, usize)> {
-    if data.len() < 2 || data[0] != 0x75 {
-        // Character string tag
+    let (tag, consumed) = Tag::decode(data).ok()?;
+    if tag.class != TagClass::Application
+        || tag.number != u32::from(ApplicationTagNumber::CharacterString)
+    {
         return None;
     }
 
-    let length = data[1] as usize;
-    if data.len() < 2 + length || length == 0 {
+    let length = tag.content_length()? as usize;
+    if length == 0 || data.len() < consumed + length {
         return None;
     }
 
-    // Check encoding byte
-    let encoding = data[2];
-    let string_data = &data[3..2 + length];
+    let encoding = data[consumed];
+    let string_data = &data[consumed + 1..consumed + length];
 
     let string = match encoding {
-        0 => {
-            // ANSI X3.4 (ASCII)
-            String::from_utf8_lossy(string_data).to_string()
-        }
         4 => {
-            // UTF-16 (UCS-2) encoding
-            if string_data.len() % 2 != 0 {
-                return None; // UTF-16 must have even number of bytes
-            }
+            // ISO 10646 UCS-2 (UTF-16)
             let utf16_chars: Vec<u16> = string_data
                 .as_chunks::<2>()
                 .0
@@ -1116,59 +1144,33 @@ fn extract_character_string(data: &[u8]) -> Option<(String, usize)> {
                 .collect();
             String::from_utf16_lossy(&utf16_chars)
         }
-        _ => {
-            // Other encodings, fallback to UTF-8
-            String::from_utf8_lossy(string_data).to_string()
-        }
+        // ANSI X3.4 (ASCII) / ISO 10646 UTF-8, and any other encoding as a fallback
+        _ => String::from_utf8_lossy(string_data).to_string(),
     };
 
-    Some((string, 2 + length))
+    Some((string, consumed + length))
 }
 
 /// Extract present value based on object type
 #[allow(dead_code)]
 fn extract_present_value(data: &[u8], object_type: ObjectType) -> Option<(String, usize)> {
-    if data.is_empty() {
-        return None;
-    }
+    use bacnet_rs::encoding::{decode_boolean, decode_real, decode_unsigned};
 
     match object_type {
         ObjectType::AnalogInput | ObjectType::AnalogOutput | ObjectType::AnalogValue => {
-            if data.len() >= 5 && data[0] == 0x44 {
-                // Real value tag
-                let bytes = [data[1], data[2], data[3], data[4]];
-                let value = f32::from_be_bytes(bytes);
-                Some((format!("{:.2}", value), 5))
-            } else {
-                None
-            }
+            let (value, consumed) = decode_real(data).ok()?;
+            Some((format!("{:.2}", value), consumed))
         }
         ObjectType::BinaryInput | ObjectType::BinaryOutput | ObjectType::BinaryValue => {
-            if data.len() >= 2 && data[0] == 0x11 {
-                // Boolean tag
-                let value = data[1] != 0;
-                Some((
-                    if value {
-                        "Active".to_string()
-                    } else {
-                        "Inactive".to_string()
-                    },
-                    2,
-                ))
-            } else {
-                None
-            }
+            let (value, consumed) = decode_boolean(data).ok()?;
+            let label = if value { "Active" } else { "Inactive" };
+            Some((label.to_string(), consumed))
         }
         ObjectType::MultiStateInput
         | ObjectType::MultiStateOutput
         | ObjectType::MultiStateValue => {
-            if data.len() >= 2 && data[0] == 0x21 {
-                // Unsigned int tag
-                let value = data[1];
-                Some((format!("State {}", value), 2))
-            } else {
-                None
-            }
+            let (value, consumed) = decode_unsigned(data).ok()?;
+            Some((format!("State {}", value), consumed))
         }
         _ => Some(("N/A".to_string(), 1)),
     }

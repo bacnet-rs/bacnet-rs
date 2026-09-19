@@ -5,6 +5,11 @@
 
 use bacnet_rs::{
     datalink::bip::{BvlcFunction, BvlcHeader},
+    encoding::{
+        decode_unsigned, encode_context_enumerated, encode_context_object_id,
+        encode_context_unsigned,
+        tag::{ApplicationTagNumber, Tag, TagClass, TagValue},
+    },
     network::{NetworkAddress, Npdu},
     object::{ObjectIdentifier, ObjectType, PropertyIdentifier},
     property::PropertyValue,
@@ -496,24 +501,14 @@ fn read_property(
     // ReadProperty Service Data - following read_property_request_encode()
 
     // Context tag 0: Object Identifier (BACnetObjectIdentifier)
-    // Encode as 4-byte object identifier: (object_type << 22) | instance
     let object_id = ObjectIdentifier::new(ObjectType::Device, device.device_id);
-    let object_id: u32 = object_id.try_into()?;
-    apdu.push(0x0C); // Context tag [0], length 4
-    apdu.extend_from_slice(&object_id.to_be_bytes());
+    let object_id_raw: u32 = object_id.try_into()?;
+    let object_id_bytes = encode_context_object_id(object_id, 0)?;
+    apdu.extend_from_slice(&object_id_bytes);
 
-    // Context tag 1: Property Identifier (BACnetPropertyIdentifier)
-    // Encode as enumerated value
-    if property_id <= 255 {
-        apdu.push(0x19); // Context tag [1], length 1
-        apdu.push(property_id as u8);
-    } else if property_id <= 65535 {
-        apdu.push(0x1A); // Context tag [1], length 2
-        apdu.extend_from_slice(&(property_id as u16).to_be_bytes());
-    } else {
-        apdu.push(0x1C); // Context tag [1], length 4
-        apdu.extend_from_slice(&property_id.to_be_bytes());
-    }
+    // Context tag 1: Property Identifier (BACnetPropertyIdentifier), as enumerated
+    let property_id_bytes = encode_context_enumerated(property_id, 1)?;
+    apdu.extend_from_slice(&property_id_bytes);
 
     // Context tag 2: Property Array Index is OPTIONAL
     // We don't include it, meaning we want the entire property (BACNET_ARRAY_ALL)
@@ -526,7 +521,7 @@ fn read_property(
             "    DEBUG: Device ID: {}, Property ID: {}",
             device.device_id, property_id
         );
-        println!("    DEBUG: Object ID encoded: 0x{:08X}", object_id);
+        println!("    DEBUG: Object ID encoded: 0x{:08X}", object_id_raw);
         println!("    DEBUG: Full APDU: {:02X?}", apdu);
     }
 
@@ -675,31 +670,22 @@ fn extract_string_value(data: &[u8]) -> Result<String, Box<dyn std::error::Error
         return Ok("(empty)".to_string());
     }
 
-    // Simple tag decoding - look for character string tag (0x74)
-    if data[0] == 0x74 || data[0] == 0x75 {
-        // Character string
-        let len = if data[0] == 0x74 {
-            data[1] as usize
-        } else {
-            // Extended length
-            ((data[1] as usize) << 8) | (data[2] as usize)
-        };
-
-        let start = if data[0] == 0x74 { 2 } else { 3 };
-        if data.len() >= start + len {
-            return Ok(String::from_utf8_lossy(&data[start..start + len]).to_string());
-        }
-    }
-
-    // Try unsigned integer
-    if (data[0] & 0xF0) == 0x20 {
-        let len = (data[0] & 0x07) as usize;
-        if len <= 4 && data.len() > len {
-            let mut value = 0u32;
-            for i in 0..len {
-                value = (value << 8) | (data[1 + i] as u32);
+    if let Ok((tag, consumed)) = Tag::decode(data) {
+        if tag.class == TagClass::Application {
+            if tag.number == u32::from(ApplicationTagNumber::CharacterString) {
+                if let Some(length) = tag.content_length() {
+                    let length = length as usize;
+                    // First content octet is the character-set byte.
+                    if length >= 1 && data.len() >= consumed + length {
+                        let string_data = &data[consumed + 1..consumed + length];
+                        return Ok(String::from_utf8_lossy(string_data).to_string());
+                    }
+                }
+            } else if tag.number == u32::from(ApplicationTagNumber::UnsignedInt) {
+                if let Ok((value, _)) = decode_unsigned(data) {
+                    return Ok(value.to_string());
+                }
             }
-            return Ok(value.to_string());
         }
     }
 
@@ -728,42 +714,63 @@ fn parse_read_property_ack_manual(data: &[u8]) -> Result<String, Box<dyn std::er
     let mut pos = 0;
 
     // Skip object identifier (context tag 0) - we already know what we asked for
-    if data[pos] == 0x0C && pos + 5 < data.len() {
-        pos += 5; // Context tag + 4 bytes object ID
-    } else {
-        return Err("Invalid object identifier in ReadProperty-ACK".into());
+    match Tag::decode(&data[pos..]) {
+        Ok((
+            Tag {
+                class: TagClass::Context,
+                number: 0,
+                value: TagValue::Primitive(length),
+            },
+            consumed,
+        )) => pos += consumed + length as usize,
+        _ => return Err("Invalid object identifier in ReadProperty-ACK".into()),
     }
 
     // Skip property identifier (context tag 1)
-    if data[pos] == 0x19 && pos + 2 < data.len() {
-        pos += 2; // Context tag + 1 byte property ID
-    } else if data[pos] == 0x1A && pos + 3 < data.len() {
-        pos += 3; // Context tag + 2 bytes property ID
-    } else {
-        return Err("Invalid property identifier in ReadProperty-ACK".into());
+    match Tag::decode(&data[pos..]) {
+        Ok((
+            Tag {
+                class: TagClass::Context,
+                number: 1,
+                value: TagValue::Primitive(length),
+            },
+            consumed,
+        )) => pos += consumed + length as usize,
+        _ => return Err("Invalid property identifier in ReadProperty-ACK".into()),
     }
 
     // Skip optional property array index (context tag 2) if present
-    if pos < data.len() && (data[pos] & 0xF8) == 0x20 {
-        let len = (data[pos] & 0x07) as usize;
-        pos += 1 + len;
+    if let Ok((
+        Tag {
+            class: TagClass::Context,
+            number: 2,
+            value: TagValue::Primitive(length),
+        },
+        consumed,
+    )) = Tag::decode(&data[pos..])
+    {
+        pos += consumed + length as usize;
     }
 
-    // Property value is in context tag 3 (opening/closing tags)
-    if pos < data.len() && data[pos] == 0x3E {
-        // Opening tag [3]
-        pos += 1;
+    // Property value is delimited by an opening/closing tag pair (context tag 3)
+    let opening_tag_3 = Tag::opening(3).expect("3 is a valid tag number");
+    let closing_tag_3 = Tag::closing(3).expect("3 is a valid tag number");
+    if let Ok((tag, consumed)) = Tag::decode(&data[pos..]) {
+        if tag == opening_tag_3 {
+            pos += consumed;
+            let value_start = pos;
 
-        // Find closing tag
-        let value_start = pos;
-        let mut value_end = pos;
-        while value_end < data.len() && data[value_end] != 0x3F {
-            // Closing tag [3]
-            value_end += 1;
-        }
+            loop {
+                match Tag::decode(&data[pos..]) {
+                    Ok((tag, _)) if tag == closing_tag_3 => break,
+                    Ok((tag, consumed)) => {
+                        pos += consumed + tag.content_length().unwrap_or(0) as usize
+                    }
+                    Err(_) => return Err("Could not parse property value".into()),
+                }
+            }
 
-        if value_end < data.len() {
-            return extract_string_value(&data[value_start..value_end]);
+            return extract_string_value(&data[value_start..pos]);
         }
     }
 
@@ -869,21 +876,12 @@ fn read_object_property(
 
     // ReadProperty Service Data
     // Context tag 0: Object Identifier
-    let obj_id: u32 = u32::try_from(*object_id)?;
-    apdu.push(0x0C); // Context tag [0], length 4
-    apdu.extend_from_slice(&obj_id.to_be_bytes());
+    let object_id_bytes = encode_context_object_id(*object_id, 0)?;
+    apdu.extend_from_slice(&object_id_bytes);
 
-    // Context tag 1: Property Identifier
-    if property_id <= 255 {
-        apdu.push(0x19); // Context tag [1], length 1
-        apdu.push(property_id as u8);
-    } else if property_id <= 65535 {
-        apdu.push(0x1A); // Context tag [1], length 2
-        apdu.extend_from_slice(&(property_id as u16).to_be_bytes());
-    } else {
-        apdu.push(0x1C); // Context tag [1], length 4
-        apdu.extend_from_slice(&property_id.to_be_bytes());
-    }
+    // Context tag 1: Property Identifier, as enumerated
+    let property_id_bytes = encode_context_enumerated(property_id, 1)?;
+    apdu.extend_from_slice(&property_id_bytes);
 
     // Send the request and wait for response (similar to read_property function)
     let mut npdu = Npdu::new();
@@ -976,27 +974,16 @@ fn read_property_with_array_index(
     // ReadProperty Service Data
     // Context tag 0: Object Identifier (Device)
     let obj_id = ObjectIdentifier::new(ObjectType::Device, device.device_id);
-    let obj_id: u32 = obj_id.try_into()?;
-    apdu.push(0x0C); // Context tag [0], length 4
-    apdu.extend_from_slice(&obj_id.to_be_bytes());
+    let object_id_bytes = encode_context_object_id(obj_id, 0)?;
+    apdu.extend_from_slice(&object_id_bytes);
 
-    // Context tag 1: Property Identifier
-    if property_id <= 255 {
-        apdu.push(0x19); // Context tag [1], length 1
-        apdu.push(property_id as u8);
-    } else if property_id <= 65535 {
-        apdu.push(0x1A); // Context tag [1], length 2
-        apdu.extend_from_slice(&(property_id as u16).to_be_bytes());
-    }
+    // Context tag 1: Property Identifier, as enumerated
+    let property_id_bytes = encode_context_enumerated(property_id, 1)?;
+    apdu.extend_from_slice(&property_id_bytes);
 
     // Context tag 2: Property Array Index
-    if array_index <= 255 {
-        apdu.push(0x29); // Context tag [2], length 1
-        apdu.push(array_index as u8);
-    } else {
-        apdu.push(0x2A); // Context tag [2], length 2
-        apdu.extend_from_slice(&(array_index as u16).to_be_bytes());
-    }
+    let array_index_bytes = encode_context_unsigned(array_index, 2)?;
+    apdu.extend_from_slice(&array_index_bytes);
 
     // Send and receive (similar to other functions)
     let mut npdu = Npdu::new();

@@ -953,157 +953,129 @@ impl<T: Clone> CircularBuffer<T> {
 
 /// Debug formatting utilities for BACnet data structures and protocol analysis
 pub mod debug {
-    use crate::object::ObjectIdentifier;
-
     use super::*;
 
     /// Format a BACnet property value for debugging
     pub fn format_property_value(data: &[u8]) -> String {
+        use crate::encoding::{
+            decode_boolean, decode_date, decode_double, decode_enumerated,
+            decode_object_identifier, decode_real, decode_signed, decode_time, decode_unsigned,
+            tag::{ApplicationTagNumber, Tag, TagClass},
+        };
+
         if data.is_empty() {
             return "[empty]".to_string();
         }
 
-        let mut result = String::new();
-        let tag = data[0];
+        let (tag, _) = match Tag::decode(data) {
+            Ok(t) => t,
+            Err(_) => return "Invalid(unparsable tag)".to_string(),
+        };
 
-        match tag {
-            0x11 => {
-                // Boolean
-                if data.len() >= 2 {
-                    result.push_str(&format!("Boolean({})", data[1] != 0));
-                } else {
-                    result.push_str("Boolean(invalid)");
-                }
-            }
-            0x21 => {
-                // Unsigned integer
-                result.push_str(&format_unsigned_integer(data));
-            }
-            0x31 => {
-                // Signed integer
-                result.push_str(&format_signed_integer(data));
-            }
-            0x44 => {
-                // Real (float)
-                if data.len() >= 5 {
-                    let bytes = [data[1], data[2], data[3], data[4]];
-                    let value = f32::from_be_bytes(bytes);
-                    result.push_str(&format!("Real({})", value));
-                } else {
-                    result.push_str("Real(invalid)");
-                }
-            }
-            0x55 => {
-                // Double
-                if data.len() >= 9 {
-                    let mut bytes = [0u8; 8];
-                    bytes.copy_from_slice(&data[1..9]);
-                    let value = f64::from_be_bytes(bytes);
-                    result.push_str(&format!("Double({})", value));
-                } else {
-                    result.push_str("Double(invalid)");
-                }
-            }
-            0x75 => {
-                // Character string
-                result.push_str(&format_character_string(data));
-            }
-            0x81..=0x8F => {
-                // Octet string
-                result.push_str(&format_octet_string(data));
-            }
-            0x91 => {
-                // Enumerated
-                result.push_str(&format_enumerated(data));
-            }
-            0xA1 => {
-                // Date
-                result.push_str(&format_date(data));
-            }
-            0xB1 => {
-                // Time
-                result.push_str(&format_time(data));
-            }
-            0xC4 => {
-                // Object identifier
-                result.push_str(&format_object_identifier(data));
-            }
-            _ => {
-                result.push_str(&format!(
+        if tag.class != TagClass::Application {
+            return format!(
+                "Unknown(tag=0x{:02X}, data={})",
+                data[0],
+                hex_dump(data, "")
+            );
+        }
+
+        let app_tag = match ApplicationTagNumber::try_from(tag.number) {
+            Ok(t) => t,
+            Err(_) => {
+                return format!(
                     "Unknown(tag=0x{:02X}, data={})",
-                    tag,
+                    data[0],
                     hex_dump(data, "")
-                ));
+                )
             }
-        }
+        };
 
-        result
+        match app_tag {
+            ApplicationTagNumber::Boolean => match decode_boolean(data) {
+                Ok((value, _)) => format!("Boolean({})", value),
+                Err(_) => "Boolean(invalid)".to_string(),
+            },
+            ApplicationTagNumber::UnsignedInt => match decode_unsigned(data) {
+                Ok((value, _)) => format!("UnsignedInt({})", value),
+                Err(_) => "UnsignedInt(invalid)".to_string(),
+            },
+            ApplicationTagNumber::SignedInt => match decode_signed(data) {
+                Ok((value, _)) => format!("SignedInt({})", value),
+                Err(_) => "SignedInt(invalid)".to_string(),
+            },
+            ApplicationTagNumber::Real => match decode_real(data) {
+                Ok((value, _)) => format!("Real({})", value),
+                Err(_) => "Real(invalid)".to_string(),
+            },
+            ApplicationTagNumber::Double => match decode_double(data) {
+                Ok((value, _)) => format!("Double({})", value),
+                Err(_) => "Double(invalid)".to_string(),
+            },
+            ApplicationTagNumber::OctetString => format_octet_string(data),
+            ApplicationTagNumber::CharacterString => format_character_string(data),
+            ApplicationTagNumber::Enumerated => match decode_enumerated(data) {
+                Ok((value, _)) => format!("Enumerated({})", value),
+                Err(_) => "Enumerated(invalid)".to_string(),
+            },
+            ApplicationTagNumber::Date => match decode_date(data) {
+                Ok(((year, month, day, weekday), _)) => {
+                    format!("Date({})", bacnet_date_to_string(year, month, day, weekday))
+                }
+                Err(_) => "Date(invalid)".to_string(),
+            },
+            ApplicationTagNumber::Time => match decode_time(data) {
+                Ok(((hour, minute, second, hundredths), _)) => format!(
+                    "Time({})",
+                    bacnet_time_to_string(hour, minute, second, hundredths)
+                ),
+                Err(_) => "Time(invalid)".to_string(),
+            },
+            ApplicationTagNumber::ObjectIdentifier => match decode_object_identifier(data) {
+                Ok((obj_id, _)) => format!("ObjectID({} {})", obj_id.object_type, obj_id.instance),
+                Err(_) => "ObjectID(invalid)".to_string(),
+            },
+            _ => format!(
+                "Unknown(tag=0x{:02X}, data={})",
+                data[0],
+                hex_dump(data, "")
+            ),
+        }
     }
 
-    fn format_unsigned_integer(data: &[u8]) -> String {
-        if data.len() < 2 {
-            return "UnsignedInt(invalid)".to_string();
-        }
-
-        let length = (data[0] & 0x07) as usize;
-        if data.len() < 1 + length {
-            return "UnsignedInt(invalid length)".to_string();
-        }
-
-        let mut value = 0u64;
-        for i in 0..length {
-            value = (value << 8) | (data[1 + i] as u64);
-        }
-
-        format!("UnsignedInt({})", value)
-    }
-
-    fn format_signed_integer(data: &[u8]) -> String {
-        if data.len() < 2 {
-            return "SignedInt(invalid)".to_string();
-        }
-
-        let length = (data[0] & 0x07) as usize;
-        if data.len() < 1 + length {
-            return "SignedInt(invalid length)".to_string();
-        }
-
-        let mut value = 0i64;
-        let sign_bit = data[1] & 0x80 != 0;
-
-        for i in 0..length {
-            value = (value << 8) | (data[1 + i] as i64);
-        }
-
-        // Sign extend if negative
-        if sign_bit {
-            let shift = 64 - (length * 8);
-            value = (value << shift) >> shift;
-        }
-
-        format!("SignedInt({})", value)
-    }
-
+    /// Formats a character string, honoring its character-set byte.
+    ///
+    /// This decodes the tag framing via [`crate::encoding::tag::Tag`] rather
+    /// than [`crate::encoding::decode_character_string`], because the latter
+    /// only supports UTF-8 content; debug output should still be readable
+    /// for UCS-2 (UTF-16) strings, which BACnet devices do send.
     fn format_character_string(data: &[u8]) -> String {
-        if data.len() < 3 {
-            return "CharString(invalid)".to_string();
-        }
+        use crate::encoding::tag::Tag;
 
-        let length = data[1] as usize;
-        if data.len() < 2 + length {
+        let (tag, consumed) = match Tag::decode(data) {
+            Ok(t) => t,
+            Err(_) => return "CharString(invalid)".to_string(),
+        };
+
+        let length = match tag.content_length() {
+            Some(length) => length as usize,
+            None => return "CharString(invalid)".to_string(),
+        };
+
+        if length == 0 || data.len() < consumed + length {
             return "CharString(invalid length)".to_string();
         }
 
-        let encoding = data[2];
-        let string_data = &data[3..2 + length];
+        let encoding = data[consumed];
+        let string_data = &data[consumed + 1..consumed + length];
 
         let decoded = match encoding {
             0 => {
-                // ANSI X3.4 (ASCII)
+                // ANSI X3.4 (ASCII) / ISO 10646 UTF-8
                 String::from_utf8_lossy(string_data).to_string()
             }
             4 => {
-                // UCS-2 (UTF-16)
+                // ISO 10646 UCS-2 (UTF-16)
                 let utf16_chars: Vec<u16> = string_data
                     .as_chunks::<2>()
                     .0
@@ -1113,7 +1085,7 @@ pub mod debug {
                 String::from_utf16_lossy(&utf16_chars)
             }
             _ => {
-                format!("<encoding={}>", encoding)
+                return format!("CharString(<encoding={}>)", encoding);
             }
         };
 
@@ -1121,71 +1093,17 @@ pub mod debug {
     }
 
     fn format_octet_string(data: &[u8]) -> String {
-        if data.is_empty() {
-            return "OctetString(invalid)".to_string();
+        match crate::encoding::decode_octet_string(data) {
+            Ok((octets, _)) => {
+                let hex_string = octets
+                    .iter()
+                    .map(|b| format!("{:02X}", b))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("OctetString([{}])", hex_string)
+            }
+            Err(_) => "OctetString(invalid)".to_string(),
         }
-
-        let length = (data[0] & 0x07) as usize;
-        if data.len() < 1 + length {
-            return "OctetString(invalid length)".to_string();
-        }
-
-        let octets = &data[1..1 + length];
-        let hex_string = octets
-            .iter()
-            .map(|b| format!("{:02X}", b))
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        format!("OctetString([{}])", hex_string)
-    }
-
-    fn format_enumerated(data: &[u8]) -> String {
-        if data.len() < 2 {
-            return "Enumerated(invalid)".to_string();
-        }
-
-        let value = data[1] as u32;
-        format!("Enumerated({})", value)
-    }
-
-    fn format_date(data: &[u8]) -> String {
-        if data.len() < 5 {
-            return "Date(invalid)".to_string();
-        }
-
-        let year = data[1] as u16 + 1900;
-        let month = data[2];
-        let day = data[3];
-        let weekday = data[4];
-
-        format!("Date({})", bacnet_date_to_string(year, month, day, weekday))
-    }
-
-    fn format_time(data: &[u8]) -> String {
-        if data.len() < 5 {
-            return "Time(invalid)".to_string();
-        }
-
-        let hour = data[1];
-        let minute = data[2];
-        let second = data[3];
-        let hundredths = data[4];
-
-        format!(
-            "Time({})",
-            bacnet_time_to_string(hour, minute, second, hundredths)
-        )
-    }
-
-    fn format_object_identifier(data: &[u8]) -> String {
-        if data.len() < 5 {
-            return "ObjectID(invalid)".to_string();
-        }
-
-        let obj_id = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
-        let obj_id: ObjectIdentifier = obj_id.into();
-        format!("ObjectID({} {})", obj_id.object_type, obj_id.instance)
     }
 
     /// Format BACnet service choice for debugging

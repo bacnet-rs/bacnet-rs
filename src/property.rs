@@ -14,15 +14,15 @@ use serde::{Deserialize, Serialize};
 use crate::{
     encoding::{
         advanced::bitstring::{decode_bit_string, encode_bit_string},
-        decode_application_tag, decode_boolean, decode_character_string, decode_date,
-        decode_double, decode_enumerated, decode_object_identifier, decode_octet_string,
-        decode_real, decode_signed64, decode_time, decode_unsigned64, encode_application_tag,
-        encode_boolean, encode_character_string, encode_date, encode_double, encode_enumerated,
-        encode_object_identifier, encode_octet_string, encode_real, encode_signed64, encode_time,
-        encode_unsigned64, EncodingError,
+        decode_boolean, decode_character_string, decode_date, decode_double, decode_enumerated,
+        decode_object_identifier, decode_octet_string, decode_real, decode_signed64, decode_time,
+        decode_unsigned64, encode_boolean, encode_character_string, encode_date, encode_double,
+        encode_enumerated, encode_object_identifier, encode_octet_string, encode_real,
+        encode_signed64, encode_time, encode_unsigned64,
+        tag::{ApplicationTagNumber, Tag, TagClass, TagValue},
+        EncodingError,
     },
     object::{EngineeringUnits, ObjectIdentifier},
-    ApplicationTag,
 };
 
 /// Decoded BACnet property value
@@ -143,58 +143,63 @@ pub fn decode_property_value(data: &[u8]) -> Result<(PropertyValue, usize), Enco
         return Err(EncodingError::InvalidTag);
     }
 
-    let (tag, length, consumed) = decode_application_tag(data)?;
+    let (t, consumed) = Tag::decode(data)?;
+    if t.class != TagClass::Application {
+        return Err(EncodingError::InvalidTag);
+    }
+    let tag = ApplicationTagNumber::try_from(t.number)?;
+    let length = t.content_length().unwrap_or(0) as usize;
 
     match tag {
-        ApplicationTag::Null => Ok((PropertyValue::Null, consumed)),
-        ApplicationTag::Boolean => {
+        ApplicationTagNumber::Null => Ok((PropertyValue::Null, consumed)),
+        ApplicationTagNumber::Boolean => {
             let (value, consumed) = decode_boolean(data)?;
             Ok((PropertyValue::Boolean(value), consumed))
         }
-        ApplicationTag::UnsignedInt => {
+        ApplicationTagNumber::UnsignedInt => {
             let (value, consumed) = decode_unsigned64(data)?;
             Ok((PropertyValue::Unsigned(value), consumed))
         }
-        ApplicationTag::SignedInt => {
+        ApplicationTagNumber::SignedInt => {
             let (value, consumed) = decode_signed64(data)?;
             Ok((PropertyValue::Signed(value), consumed))
         }
-        ApplicationTag::Real => {
+        ApplicationTagNumber::Real => {
             let (value, consumed) = decode_real(data)?;
             Ok((PropertyValue::Real(value), consumed))
         }
-        ApplicationTag::Double => {
+        ApplicationTagNumber::Double => {
             let (value, consumed) = decode_double(data)?;
             Ok((PropertyValue::Double(value), consumed))
         }
-        ApplicationTag::OctetString => {
+        ApplicationTagNumber::OctetString => {
             let (value, consumed) = decode_octet_string(data)?;
             Ok((PropertyValue::OctetString(value), consumed))
         }
-        ApplicationTag::CharacterString => {
+        ApplicationTagNumber::CharacterString => {
             let (value, consumed) = decode_character_string(data)?;
             Ok((PropertyValue::CharacterString(value), consumed))
         }
-        ApplicationTag::BitString => {
+        ApplicationTagNumber::BitString => {
             let (value, consumed) = decode_bit_string(data)?;
             Ok((PropertyValue::BitString(value), consumed))
         }
-        ApplicationTag::Enumerated => {
+        ApplicationTagNumber::Enumerated => {
             let (value, consumed) = decode_enumerated(data)?;
             Ok((PropertyValue::Enumerated(value), consumed))
         }
-        ApplicationTag::Date => {
+        ApplicationTagNumber::Date => {
             let ((year, month, day, weekday), consumed) = decode_date(data)?;
             Ok((PropertyValue::Date(year, month, day, weekday), consumed))
         }
-        ApplicationTag::Time => {
+        ApplicationTagNumber::Time => {
             let ((hour, minute, second, hundredths), consumed) = decode_time(data)?;
             Ok((
                 PropertyValue::Time(hour, minute, second, hundredths),
                 consumed,
             ))
         }
-        ApplicationTag::ObjectIdentifier => {
+        ApplicationTagNumber::ObjectIdentifier => {
             let (value, consumed) = decode_object_identifier(data)?;
             Ok((PropertyValue::ObjectIdentifier(value), consumed))
         }
@@ -222,7 +227,12 @@ pub fn encode_property_value(
         PropertyValue::Date(y, m, d, w) => encode_date(buffer, *y, *m, *d, *w)?,
         PropertyValue::Time(h, m, s, hs) => encode_time(buffer, *h, *m, *s, *hs)?,
         PropertyValue::ObjectIdentifier(id) => encode_object_identifier(buffer, *id)?,
-        PropertyValue::Null => encode_application_tag(buffer, ApplicationTag::Null, 0),
+        PropertyValue::Null => Tag {
+            number: ApplicationTagNumber::Null as u32,
+            class: TagClass::Application,
+            value: TagValue::Primitive(0),
+        }
+        .encode(buffer)?,
         PropertyValue::Unknown(data) => buffer.extend_from_slice(data),
     }
 

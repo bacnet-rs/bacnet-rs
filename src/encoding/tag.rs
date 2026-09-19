@@ -230,7 +230,11 @@ impl Tag {
         };
 
         let extended_number = self.number > 14;
-        let number_nibble: u8 = if extended_number { 0x0F } else { self.number as u8 };
+        let number_nibble: u8 = if extended_number {
+            0x0F
+        } else {
+            self.number as u8
+        };
 
         let lvt: u8 = match self.value {
             TagValue::Opening => 0b110,
@@ -563,7 +567,10 @@ mod tests {
     #[test]
     fn length_boundary_253_vs_254() {
         assert_round_trip(primitive(TagClass::Context, 0, 253), &[0x0D, 253]);
-        assert_round_trip(primitive(TagClass::Context, 0, 254), &[0x0D, 254, 0x00, 0xFE]);
+        assert_round_trip(
+            primitive(TagClass::Context, 0, 254),
+            &[0x0D, 254, 0x00, 0xFE],
+        );
     }
 
     #[test]
@@ -607,10 +614,7 @@ mod tests {
 
     #[test]
     fn decode_reports_buffer_underflow() {
-        assert!(matches!(
-            Tag::decode(&[]),
-            Err(EncodingError::InvalidTag)
-        ));
+        assert!(matches!(Tag::decode(&[]), Err(EncodingError::InvalidTag)));
         // Extended tag number with no extension octet.
         assert!(matches!(
             Tag::decode(&[0xF8]),

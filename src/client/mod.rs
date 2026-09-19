@@ -28,7 +28,10 @@ use alloc::{collections::BTreeMap as HashMap, string::String, vec::Vec};
 use crate::{
     app::{Apdu, MaxApduSize, MaxSegments},
     datalink::bip::BACNET_IP_PORT,
-    encoding::decode_object_identifier,
+    encoding::{
+        decode_object_identifier,
+        tag::{ApplicationTagNumber, Tag, TagClass},
+    },
     network::{NetworkAddress, NetworkLayerMessage, NetworkMessageType, Npdu},
     object::{EngineeringUnits, ObjectIdentifier, ObjectType, PropertyIdentifier, Segmentation},
     property::{encode_property_value, PropertyValue},
@@ -439,8 +442,16 @@ impl BacnetClient {
         let mut pos = 0;
 
         while pos < data.len() {
-            // 0xC4 is the application tag for a 4-byte object identifier.
-            if data[pos] == 0xC4 {
+            // Look for an application-tagged, 4-octet object identifier.
+            let is_object_id_tag = matches!(
+                Tag::decode(&data[pos..]),
+                Ok((tag, _))
+                    if tag.class == TagClass::Application
+                        && tag.number == u32::from(ApplicationTagNumber::ObjectIdentifier)
+                        && tag.content_length() == Some(4)
+            );
+
+            if is_object_id_tag {
                 match decode_object_identifier(&data[pos..]) {
                     Ok((identifier, consumed)) => {
                         if identifier.object_type != ObjectType::Device {

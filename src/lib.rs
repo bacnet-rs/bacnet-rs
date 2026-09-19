@@ -133,7 +133,7 @@ pub mod property;
 
 // Re-export main types for convenient access
 pub use datalink::{DataLink, DataLinkAddress, DataLinkType};
-pub use encoding::{ApplicationTag, EncodingError};
+pub use encoding::{tag::ApplicationTagNumber, EncodingError};
 pub use object::{BacnetObject, ObjectType, PropertyIdentifier};
 pub use service::{ConfirmedServiceChoice, ServiceError, UnconfirmedServiceChoice};
 pub use vendor::{format_vendor_display, get_vendor_info, get_vendor_name, VendorInfo};
@@ -153,7 +153,7 @@ pub const BACNET_MAX_MPDU: usize = 1497;
 mod tests {
     use crate::object::ObjectIdentifier;
     use crate::util::crc16_mstp;
-    use crate::{ApplicationTag, EncodingError, ObjectType};
+    use crate::{ApplicationTagNumber, EncodingError, ObjectType};
 
     #[cfg(not(feature = "std"))]
     use alloc::format;
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn test_no_std_types() {
         // Test that our types work in both std and no-std environments
-        let tag = ApplicationTag::Boolean;
+        let tag = ApplicationTagNumber::Boolean;
         assert_eq!(tag as u8, 1);
 
         let obj_type = ObjectType::AnalogInput;

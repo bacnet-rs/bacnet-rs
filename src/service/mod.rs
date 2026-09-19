@@ -385,11 +385,13 @@ generate_custom_enum!(
 }, u8, 64..=255);
 
 use crate::encoding::{
-    decode_context_enumerated, decode_context_object_id, decode_context_tag,
-    decode_context_unsigned, decode_enumerated, decode_object_identifier, decode_tag,
-    decode_unsigned, encode_context_boolean, encode_context_enumerated, encode_context_object_id,
-    encode_context_unsigned, encode_enumerated, encode_object_identifier, encode_unsigned,
-    BACnetTag, Result as EncodingResult,
+    decode_context_enumerated, decode_context_object_id, decode_context_unsigned,
+    decode_enumerated, decode_object_identifier, decode_unsigned, encode_closing_tag,
+    encode_context_boolean, encode_context_enumerated, encode_context_object_id,
+    encode_context_signed, encode_context_unsigned, encode_enumerated, encode_object_identifier,
+    encode_octet_string, encode_opening_tag, encode_unsigned,
+    tag::{Tag, TagClass, TagValue},
+    Result as EncodingResult,
 };
 use crate::object::{ObjectError, ObjectIdentifier, PropertyIdentifier, Segmentation};
 use crate::property::{self, decode_property_value, encode_property_value};
@@ -710,19 +712,26 @@ impl ReadPropertyResponse {
             Err(_) => None,
         };
 
-        let (tag, _, consumed) = decode_tag(&data[pos..])?;
+        let (tag, consumed) = Tag::decode(&data[pos..])?;
         pos += consumed;
 
-        let property_values = if let BACnetTag::Context(3) = tag {
-            let (tag, _, _) = decode_tag(&data[pos..])?;
+        let property_values = if matches!(
+            tag,
+            Tag {
+                class: TagClass::Context,
+                number: 3,
+                value: TagValue::Opening
+            }
+        ) {
+            let (tag, _) = Tag::decode(&data[pos..])?;
             let mut current_tag = tag;
             let mut values = Vec::new();
 
-            while let BACnetTag::Application(_) = current_tag {
+            while current_tag.class == TagClass::Application {
                 let (value, consumed) = decode_property_value(&data[pos..])?;
                 values.push(value);
                 pos += consumed;
-                let (tag, _, _) = decode_tag(&data[pos..])?;
+                let (tag, _) = Tag::decode(&data[pos..])?;
                 current_tag = tag;
             }
             values
@@ -730,12 +739,19 @@ impl ReadPropertyResponse {
             return Err(EncodingError::InvalidTag);
         };
 
-        let (tag, _, _) = decode_tag(&data[pos..])?;
+        let (tag, _) = Tag::decode(&data[pos..])?;
 
-        if let BACnetTag::Context(tag) = tag {
-            if tag != 3 {
+        if let Tag {
+            class: TagClass::Context,
+            number,
+            value: TagValue::Closing,
+        } = tag
+        {
+            if number != 3 {
                 return Err(EncodingError::InvalidTag);
             }
+        } else {
+            return Err(EncodingError::InvalidTag);
         }
 
         Ok(ReadPropertyResponse {
@@ -760,11 +776,11 @@ impl ReadPropertyResponse {
         }
 
         // Property value - context tag 3 (opening tag)
-        buffer.push(0x3E); // Context tag 3, opening tag
+        encode_opening_tag(buffer, 3)?;
         for property_value in &self.property_values {
             encode_property_value(property_value, buffer)?;
         }
-        buffer.push(0x3F); // Context tag 3, closing tag
+        encode_closing_tag(buffer, 3)?;
 
         Ok(())
     }
@@ -836,29 +852,28 @@ impl WritePropertyRequest {
     /// Encode the Write Property request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
         // Object identifier - context tag 0
-        let object_id: u32 = self.object_identifier.try_into()?;
-        buffer.push(0x0C); // Context tag 0, length 4
-        buffer.extend_from_slice(&object_id.to_be_bytes());
+        let obj_id_bytes = encode_context_object_id(self.object_identifier, 0)?;
+        buffer.extend_from_slice(&obj_id_bytes);
 
-        // Property identifier - context tag 1
-        buffer.push(0x19); // Context tag 1, length 1
-        buffer.push(self.property_identifier as u8);
+        // Property identifier - context tag 1 (as enumerated)
+        let prop_id_bytes = encode_context_enumerated(self.property_identifier, 1)?;
+        buffer.extend_from_slice(&prop_id_bytes);
 
         // Property array index - context tag 2 (optional)
         if let Some(array_index) = self.property_array_index {
-            buffer.push(0x29); // Context tag 2, length 1
-            buffer.push(array_index as u8);
+            let array_bytes = encode_context_unsigned(array_index, 2)?;
+            buffer.extend_from_slice(&array_bytes);
         }
 
         // Property value - context tag 3 (opening tag)
-        buffer.push(0x3E); // Context tag 3, opening tag
+        encode_opening_tag(buffer, 3)?;
         buffer.extend_from_slice(&self.property_value);
-        buffer.push(0x3F); // Context tag 3, closing tag
+        encode_closing_tag(buffer, 3)?;
 
         // Priority - context tag 4 (optional)
         if let Some(priority) = self.priority {
-            buffer.push(0x49); // Context tag 4, length 1
-            buffer.push(priority);
+            let priority_bytes = encode_context_unsigned(priority as u32, 4)?;
+            buffer.extend_from_slice(&priority_bytes);
         }
 
         Ok(())
@@ -868,68 +883,62 @@ impl WritePropertyRequest {
     pub fn decode(data: &[u8]) -> EncodingResult<Self> {
         let mut pos = 0;
 
-        // Decode object identifier - context tag 0
-        if pos + 5 > data.len() || data[pos] != 0x0C {
-            return Err(crate::encoding::EncodingError::InvalidTag);
-        }
-        pos += 1;
+        let (object_identifier, consumed) = decode_context_object_id(data, 0)?;
+        pos += consumed;
 
-        let object_id_bytes = [data[pos], data[pos + 1], data[pos + 2], data[pos + 3]];
-        let object_id = u32::from_be_bytes(object_id_bytes);
-        let object_identifier = object_id.into();
-        pos += 4;
-
-        // Decode property identifier - context tag 1
-        if pos + 2 > data.len() || data[pos] != 0x19 {
-            return Err(crate::encoding::EncodingError::InvalidTag);
-        }
-        pos += 1;
-        let property_identifier = data[pos] as u32;
-        pos += 1;
+        let (property_identifier, consumed) = decode_context_enumerated(&data[pos..], 1)?;
+        pos += consumed;
 
         // Property array index - context tag 2 (optional)
-        let property_array_index = if pos < data.len() && data[pos] == 0x29 {
-            pos += 1;
-            let array_index = data[pos] as u32;
-            pos += 1;
-            Some(array_index)
-        } else {
-            None
+        let property_array_index = match decode_context_unsigned(&data[pos..], 2) {
+            Ok((array_index, consumed)) => {
+                pos += consumed;
+                Some(array_index)
+            }
+            Err(_) => None,
         };
 
         // Property value - context tag 3 (opening tag)
-        if pos >= data.len() || data[pos] != 0x3E {
+        let (tag, consumed) = Tag::decode(&data[pos..])?;
+        if !matches!(
+            tag,
+            Tag {
+                class: TagClass::Context,
+                number: 3,
+                value: TagValue::Opening
+            }
+        ) {
             return Err(crate::encoding::EncodingError::InvalidTag);
         }
-        pos += 1;
+        pos += consumed;
 
-        // Find closing tag
+        // Skip the encoded value's tagged elements to find the matching
+        // closing tag, rather than scanning raw bytes (which could false-
+        // match a content byte that happens to equal a closing-tag byte).
         let value_start = pos;
-        let mut value_end = pos;
-        while value_end < data.len() {
-            if data[value_end] == 0x3F {
+        loop {
+            let (tag, consumed) = Tag::decode(&data[pos..])?;
+            if matches!(
+                tag,
+                Tag {
+                    class: TagClass::Context,
+                    number: 3,
+                    value: TagValue::Closing
+                }
+            ) {
                 break;
             }
-            value_end += 1;
+            pos += consumed + tag.content_length().unwrap_or(0) as usize;
         }
+        let property_value = data[value_start..pos].to_vec();
 
-        if value_end >= data.len() {
-            return Err(crate::encoding::EncodingError::InvalidTag);
-        }
-
-        let property_value = data[value_start..value_end].to_vec();
-        pos = value_end + 1;
+        let (_, consumed) = Tag::decode(&data[pos..])?;
+        pos += consumed;
 
         // Priority - context tag 4 (optional)
-        let priority = if pos < data.len() && data[pos] == 0x49 {
-            pos += 1;
-            if pos < data.len() {
-                Some(data[pos])
-            } else {
-                None
-            }
-        } else {
-            None
+        let priority = match decode_context_unsigned(&data[pos..], 4) {
+            Ok((priority, _consumed)) => Some(priority as u8),
+            Err(_) => None,
         };
 
         Ok(WritePropertyRequest {
@@ -1010,13 +1019,13 @@ impl ReadAccessSpecification {
         buffer.extend_from_slice(&object_id_bytes);
 
         // Property references - context tag 1 (opening tag)
-        buffer.push(0x1E); // Context tag 1, opening tag
+        encode_opening_tag(buffer, 1)?;
 
         for property_ref in &self.property_references {
             property_ref.encode(buffer)?;
         }
 
-        buffer.push(0x1F); // Context tag 1, closing tag
+        encode_closing_tag(buffer, 1)?;
 
         Ok(())
     }
@@ -1088,29 +1097,22 @@ impl ReadAccessResult {
         let (object_id, consumed) = decode_context_object_id(data, 0)?;
         total_consumed += consumed;
 
-        let (context_id, context_size, consumed) = decode_context_tag(&data[total_consumed..])?;
+        let (open_tag, consumed) = Tag::decode(&data[total_consumed..])?;
         total_consumed += consumed;
 
-        if context_id == 1 && context_size == 6 {
-            let (mut context_id, _, _) = decode_context_tag(&data[total_consumed..])?;
-
-            while context_id != 1 {
-                let (result, consumed) = PropertyResult::decode(&data[total_consumed..])?;
-                total_consumed += consumed;
-                results.push(result);
-
-                let (id, _, _) = decode_context_tag(&data[total_consumed..])?;
-                context_id = id;
-            }
-
-            let (_, _, consumed) = decode_context_tag(&data[total_consumed..])?;
-            total_consumed += consumed;
-
-            if context_id != 1 {
-                return Err(EncodingError::InvalidTag);
-            }
-        } else {
+        if !(open_tag.class == TagClass::Context && open_tag.number == 1 && open_tag.is_opening()) {
             return Err(EncodingError::InvalidTag);
+        }
+
+        loop {
+            let (peek, peek_consumed) = Tag::decode(&data[total_consumed..])?;
+            if peek.class == TagClass::Context && peek.number == 1 && peek.is_closing() {
+                total_consumed += peek_consumed;
+                break;
+            }
+            let (result, consumed) = PropertyResult::decode(&data[total_consumed..])?;
+            total_consumed += consumed;
+            results.push(result);
         }
 
         Ok((
@@ -1135,9 +1137,16 @@ impl PropertyResult {
         let (property_identifier, consumed) = decode_context_enumerated(bytes, 2)?;
         let mut total_consumed = consumed;
 
-        let (tag, _, _) = decode_tag(&bytes[total_consumed..])?;
+        let (tag, _) = Tag::decode(&bytes[total_consumed..])?;
 
-        let array_index = if let BACnetTag::Context(3) = tag {
+        let array_index = if matches!(
+            tag,
+            Tag {
+                class: TagClass::Context,
+                number: 3,
+                value: TagValue::Primitive(_)
+            }
+        ) {
             let (index, consumed) = decode_context_unsigned(&bytes[total_consumed..], 3)?;
             total_consumed += consumed;
             Some(index)
@@ -1145,23 +1154,37 @@ impl PropertyResult {
             None
         };
 
-        let (tag, _, consumed) = decode_tag(&bytes[total_consumed..])?;
+        let (tag, consumed) = Tag::decode(&bytes[total_consumed..])?;
         total_consumed += consumed;
 
-        let value = if let BACnetTag::Context(4) = tag {
-            let (tag, _, _) = decode_tag(&bytes[total_consumed..])?;
+        let value = if matches!(
+            tag,
+            Tag {
+                class: TagClass::Context,
+                number: 4,
+                value: TagValue::Opening
+            }
+        ) {
+            let (tag, _) = Tag::decode(&bytes[total_consumed..])?;
             let mut current_tag = tag;
             let mut values = Vec::new();
 
-            while let BACnetTag::Application(_) = current_tag {
+            while current_tag.class == TagClass::Application {
                 let (value, consumed) = decode_property_value(&bytes[total_consumed..])?;
                 values.push(value);
                 total_consumed += consumed;
-                let (tag, _, _) = decode_tag(&bytes[total_consumed..])?;
+                let (tag, _) = Tag::decode(&bytes[total_consumed..])?;
                 current_tag = tag;
             }
             PropertyResultValue::Value(values)
-        } else if let BACnetTag::Context(5) = tag {
+        } else if matches!(
+            tag,
+            Tag {
+                class: TagClass::Context,
+                number: 5,
+                value: TagValue::Opening
+            }
+        ) {
             let (error_class, consumed) = decode_enumerated(&bytes[total_consumed..])?;
             total_consumed += consumed;
             let (error_code, consumed) = decode_enumerated(&bytes[total_consumed..])?;
@@ -1171,11 +1194,16 @@ impl PropertyResult {
             return Err(EncodingError::InvalidTag);
         };
 
-        let (tag, _, consumed) = decode_tag(&bytes[total_consumed..])?;
+        let (tag, consumed) = Tag::decode(&bytes[total_consumed..])?;
         total_consumed += consumed;
 
-        if let BACnetTag::Context(tag) = tag {
-            if tag != 4 && tag != 5 {
+        if let Tag {
+            class: TagClass::Context,
+            number,
+            value: TagValue::Closing,
+        } = tag
+        {
+            if number != 4 && number != 5 {
                 return Err(EncodingError::InvalidTag);
             }
         } else {
@@ -1351,11 +1379,11 @@ impl CovNotificationProperty {
             buffer.append(&mut array_bytes);
         }
 
-        buffer.push(0x2E);
+        encode_opening_tag(buffer, 2)?;
         for value in &self.property_values {
             encode_property_value(value, buffer)?;
         }
-        buffer.push(0x2F);
+        encode_closing_tag(buffer, 2)?;
 
         if let Some(priority) = self.priority {
             let mut priority_bytes = encode_context_unsigned(priority as u32, 3)?;
@@ -1371,9 +1399,16 @@ impl CovNotificationProperty {
         let (prop_id, consumed) = decode_context_enumerated(&data[total_consumed..], 0)?;
         total_consumed += consumed;
 
-        let (tag, _, _) = decode_tag(&data[total_consumed..])?;
+        let (tag, _) = Tag::decode(&data[total_consumed..])?;
 
-        let property_array_index = if tag == BACnetTag::Context(1) {
+        let property_array_index = if matches!(
+            tag,
+            Tag {
+                class: TagClass::Context,
+                number: 1,
+                value: TagValue::Primitive(_)
+            }
+        ) {
             let (index, consumed) = decode_context_unsigned(&data[total_consumed..], 1)?;
             total_consumed += consumed;
             Some(index)
@@ -1381,30 +1416,45 @@ impl CovNotificationProperty {
             None
         };
 
-        let (tag, _, consumed) = decode_tag(&data[total_consumed..])?;
+        let (tag, consumed) = Tag::decode(&data[total_consumed..])?;
         total_consumed += consumed;
         let mut property_values = Vec::new();
 
-        if let BACnetTag::Context(2) = tag {
-            let (mut current_tag, _, _) = decode_tag(&data[total_consumed..])?;
+        if matches!(
+            tag,
+            Tag {
+                class: TagClass::Context,
+                number: 2,
+                value: TagValue::Opening
+            }
+        ) {
+            let closing_tag = Tag::closing(2).expect("2 is a valid tag number");
+            let (mut current_tag, _) = Tag::decode(&data[total_consumed..])?;
 
-            while current_tag != BACnetTag::Context(2) {
+            while current_tag != closing_tag {
                 let (value, consumed) = decode_property_value(&data[total_consumed..])?;
                 total_consumed += consumed;
                 property_values.push(value);
-                let (tag, _, _) = decode_tag(&data[total_consumed..])?;
+                let (tag, _) = Tag::decode(&data[total_consumed..])?;
                 current_tag = tag;
             }
 
-            let (_, _, consumed) = decode_tag(&data[total_consumed..])?;
+            let (_, consumed) = Tag::decode(&data[total_consumed..])?;
             total_consumed += consumed;
         } else {
             return Err(EncodingError::InvalidTag);
         };
 
         let priority = if total_consumed < data.len() {
-            let (tag, _, _) = decode_tag(&data[total_consumed..])?;
-            if tag == BACnetTag::Context(3) {
+            let (tag, _) = Tag::decode(&data[total_consumed..])?;
+            if matches!(
+                tag,
+                Tag {
+                    class: TagClass::Context,
+                    number: 3,
+                    value: TagValue::Primitive(_)
+                }
+            ) {
                 let (priority, consumed) = decode_context_unsigned(&data[total_consumed..], 3)?;
                 total_consumed += consumed;
                 Some(priority as u8)
@@ -1474,11 +1524,11 @@ impl CovNotificationRequest {
         let mut time_remaining = encode_context_unsigned(self.time_remaining, 3)?;
         buffer.append(&mut time_remaining);
 
-        buffer.push(0x4E);
+        encode_opening_tag(buffer, 4)?;
         for property in &self.properties {
             property.encode(buffer)?;
         }
-        buffer.push(0x4F);
+        encode_closing_tag(buffer, 4)?;
 
         Ok(())
     }
@@ -1502,19 +1552,27 @@ impl CovNotificationRequest {
         let (time_remaining, consumed) = decode_context_unsigned(&data[total_consumed..], 3)?;
         total_consumed += consumed;
 
-        let (tag, _, consumed) = decode_tag(&data[total_consumed..])?;
+        let (tag, consumed) = Tag::decode(&data[total_consumed..])?;
         total_consumed += consumed;
         let mut properties = Vec::new();
 
-        if let BACnetTag::Context(4) = tag {
-            let (mut current_tag, _, _) = decode_tag(&data[total_consumed..])?;
+        if matches!(
+            tag,
+            Tag {
+                class: TagClass::Context,
+                number: 4,
+                value: TagValue::Opening
+            }
+        ) {
+            let closing_tag = Tag::closing(4).expect("4 is a valid tag number");
+            let (mut current_tag, _) = Tag::decode(&data[total_consumed..])?;
 
-            while current_tag != BACnetTag::Context(4) {
+            while current_tag != closing_tag {
                 let (property, consumed) =
                     CovNotificationProperty::decode(&data[total_consumed..])?;
                 total_consumed += consumed;
                 properties.push(property);
-                let (tag, _, _) = decode_tag(&data[total_consumed..])?;
+                let (tag, _) = Tag::decode(&data[total_consumed..])?;
                 current_tag = tag;
             }
         } else {
@@ -1720,12 +1778,11 @@ impl AtomicReadFileRequest {
     /// Encode the Atomic Read File request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
         // File identifier - context tag 0
-        let file_id: u32 = self.file_identifier.try_into()?;
-        buffer.push(0x0C); // Context tag 0, length 4
-        buffer.extend_from_slice(&file_id.to_be_bytes());
+        let file_id_bytes = encode_context_object_id(self.file_identifier, 0)?;
+        buffer.extend_from_slice(&file_id_bytes);
 
         // Access method - context tag 1 (opening tag)
-        buffer.push(0x1E); // Context tag 1, opening tag
+        encode_opening_tag(buffer, 1)?;
 
         match &self.access_method {
             FileAccessMethod::StreamAccess {
@@ -1733,38 +1790,38 @@ impl AtomicReadFileRequest {
                 requested_octet_count,
             } => {
                 // Stream access - context tag 0 (opening tag)
-                buffer.push(0x0E); // Context tag 0, opening tag
+                encode_opening_tag(buffer, 0)?;
 
                 // File start position - context tag 0
-                buffer.push(0x09); // Context tag 0, length 1
-                buffer.extend_from_slice(&file_start_position.to_be_bytes());
+                let start_bytes = encode_context_signed(*file_start_position, 0)?;
+                buffer.extend_from_slice(&start_bytes);
 
                 // Requested octet count - context tag 1
-                buffer.push(0x19); // Context tag 1, length 1
-                buffer.extend_from_slice(&requested_octet_count.to_be_bytes());
+                let count_bytes = encode_context_unsigned(*requested_octet_count, 1)?;
+                buffer.extend_from_slice(&count_bytes);
 
-                buffer.push(0x0F); // Context tag 0, closing tag
+                encode_closing_tag(buffer, 0)?;
             }
             FileAccessMethod::RecordAccess {
                 file_start_record,
                 requested_record_count,
             } => {
                 // Record access - context tag 1 (opening tag)
-                buffer.push(0x1E); // Context tag 1, opening tag
+                encode_opening_tag(buffer, 1)?;
 
                 // File start record - context tag 0
-                buffer.push(0x09); // Context tag 0, length 1
-                buffer.extend_from_slice(&file_start_record.to_be_bytes());
+                let start_bytes = encode_context_signed(*file_start_record, 0)?;
+                buffer.extend_from_slice(&start_bytes);
 
                 // Requested record count - context tag 1
-                buffer.push(0x19); // Context tag 1, length 1
-                buffer.extend_from_slice(&requested_record_count.to_be_bytes());
+                let count_bytes = encode_context_unsigned(*requested_record_count, 1)?;
+                buffer.extend_from_slice(&count_bytes);
 
-                buffer.push(0x1F); // Context tag 1, closing tag
+                encode_closing_tag(buffer, 1)?;
             }
         }
 
-        buffer.push(0x1F); // Context tag 1, closing tag
+        encode_closing_tag(buffer, 1)?;
 
         Ok(())
     }
@@ -1892,12 +1949,11 @@ impl AtomicWriteFileRequest {
     /// Encode the Atomic Write File request
     pub fn encode(&self, buffer: &mut Vec<u8>) -> EncodingResult<()> {
         // File identifier - context tag 0
-        let file_id: u32 = self.file_identifier.try_into()?;
-        buffer.push(0x0C); // Context tag 0, length 4
-        buffer.extend_from_slice(&file_id.to_be_bytes());
+        let file_id_bytes = encode_context_object_id(self.file_identifier, 0)?;
+        buffer.extend_from_slice(&file_id_bytes);
 
         // Access method - context tag 1 (opening tag)
-        buffer.push(0x1E); // Context tag 1, opening tag
+        encode_opening_tag(buffer, 1)?;
 
         match &self.access_method {
             FileWriteAccessMethod::StreamAccess {
@@ -1905,18 +1961,18 @@ impl AtomicWriteFileRequest {
                 file_data,
             } => {
                 // Stream access - context tag 0 (opening tag)
-                buffer.push(0x0E); // Context tag 0, opening tag
+                encode_opening_tag(buffer, 0)?;
 
                 // File start position - context tag 0
-                buffer.push(0x09); // Context tag 0, length 1
-                buffer.extend_from_slice(&file_start_position.to_be_bytes());
+                let start_bytes = encode_context_signed(*file_start_position, 0)?;
+                buffer.extend_from_slice(&start_bytes);
 
                 // File data - context tag 1 (opening tag)
-                buffer.push(0x1E); // Context tag 1, opening tag
+                encode_opening_tag(buffer, 1)?;
                 buffer.extend_from_slice(file_data);
-                buffer.push(0x1F); // Context tag 1, closing tag
+                encode_closing_tag(buffer, 1)?;
 
-                buffer.push(0x0F); // Context tag 0, closing tag
+                encode_closing_tag(buffer, 0)?;
             }
             FileWriteAccessMethod::RecordAccess {
                 file_start_record,
@@ -1924,32 +1980,29 @@ impl AtomicWriteFileRequest {
                 file_record_data,
             } => {
                 // Record access - context tag 1 (opening tag)
-                buffer.push(0x1E); // Context tag 1, opening tag
+                encode_opening_tag(buffer, 1)?;
 
                 // File start record - context tag 0
-                buffer.push(0x09); // Context tag 0, length 1
-                buffer.extend_from_slice(&file_start_record.to_be_bytes());
+                let start_bytes = encode_context_signed(*file_start_record, 0)?;
+                buffer.extend_from_slice(&start_bytes);
 
                 // Record count - context tag 1
                 let record_count = file_record_data.len() as u32;
-                buffer.push(0x19); // Context tag 1, length 1
-                buffer.extend_from_slice(&record_count.to_be_bytes());
+                let count_bytes = encode_context_unsigned(record_count, 1)?;
+                buffer.extend_from_slice(&count_bytes);
 
                 // File record data - context tag 2 (opening tag)
-                buffer.push(0x2E); // Context tag 2, opening tag
+                encode_opening_tag(buffer, 2)?;
                 for record in file_record_data {
-                    // Each record as octet string
-                    buffer.push(0x65); // Application tag 6 (OctetString), length depends on record size
-                    buffer.push(record.len() as u8);
-                    buffer.extend_from_slice(record);
+                    encode_octet_string(buffer, record)?;
                 }
-                buffer.push(0x2F); // Context tag 2, closing tag
+                encode_closing_tag(buffer, 2)?;
 
-                buffer.push(0x1F); // Context tag 1, closing tag
+                encode_closing_tag(buffer, 1)?;
             }
         }
 
-        buffer.push(0x1F); // Context tag 1, closing tag
+        encode_closing_tag(buffer, 1)?;
 
         Ok(())
     }

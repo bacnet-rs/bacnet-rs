@@ -47,7 +47,7 @@
 //! ## Encoding Basic Types
 //!
 //! ```rust
-//! use bacnet_rs::encoding::{encode_unsigned, encode_real, ApplicationTag};
+//! use bacnet_rs::encoding::{encode_unsigned, encode_real};
 //!
 //! let mut buffer = Vec::new();
 //!
@@ -63,7 +63,7 @@
 //! ## Decoding Basic Types
 //!
 //! ```rust
-//! use bacnet_rs::encoding::{decode_unsigned, ApplicationTag};
+//! use bacnet_rs::encoding::decode_unsigned;
 //!
 //! // Sample encoded data (tag + value)
 //! let data = vec![0x21, 0x2A]; // Unsigned integer 42
@@ -77,11 +77,12 @@
 //! ## Working with Application Tags
 //!
 //! ```rust
-//! use bacnet_rs::encoding::{ApplicationTag, decode_application_tag};
+//! use bacnet_rs::encoding::tag::{Tag, TagClass};
 //!
 //! let data = vec![0x21, 0x2A]; // Unsigned integer
-//! let (tag, length, consumed) = decode_application_tag(&data).unwrap();
-//! assert_eq!(tag, ApplicationTag::UnsignedInt);
+//! let (tag, _consumed) = Tag::decode(&data).unwrap();
+//! assert_eq!(tag.class, TagClass::Application);
+//! assert_eq!(tag.number, 2); // 2 = Unsigned Integer
 //! ```
 //!
 //! ## Context-Specific Encoding
@@ -140,6 +141,8 @@ use crate::object::ObjectIdentifier;
 
 pub mod tag;
 
+use tag::{ApplicationTagNumber, Tag, TagClass, TagValue};
+
 /// Result type for encoding operations
 #[cfg(feature = "std")]
 pub type Result<T> = std::result::Result<T, EncodingError>;
@@ -183,163 +186,26 @@ impl fmt::Display for EncodingError {
 #[cfg(feature = "std")]
 impl Error for EncodingError {}
 
-/// BACnet application tag numbers
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ApplicationTag {
-    Null = 0,
-    Boolean = 1,
-    UnsignedInt = 2,
-    SignedInt = 3,
-    Real = 4,
-    Double = 5,
-    OctetString = 6,
-    CharacterString = 7,
-    BitString = 8,
-    Enumerated = 9,
-    Date = 10,
-    Time = 11,
-    ObjectIdentifier = 12,
-    Reserved13 = 13,
-    Reserved14 = 14,
-    Reserved15 = 15,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BACnetTag {
-    Application(ApplicationTag),
-    Context(u8),
-}
-
-pub fn decode_tag(data: &[u8]) -> Result<(BACnetTag, usize, usize)> {
-    if data.is_empty() {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    let tag_byte = data[0];
-    let tag_type = tag_byte & 0x08;
-    let mut length = (tag_byte & 0x07) as usize;
-    let mut consumed = 1;
-
-    let tag = if tag_type == 0 {
-        BACnetTag::Application(ApplicationTag::try_from(tag_byte >> 4)?)
-    } else {
-        BACnetTag::Context(tag_byte >> 4)
-    };
-
-    if length == 5 {
-        if data.len() < 2 {
-            return Err(EncodingError::BufferUnderflow);
-        }
-
-        let len_byte = data[1];
-        consumed += 1;
-
-        match len_byte {
-            0..=253 => {
-                length = len_byte as usize;
-            }
-            254 => {
-                if data.len() < 4 {
-                    return Err(EncodingError::BufferUnderflow);
-                }
-                length = u16::from_be_bytes([data[2], data[3]]) as usize;
-                consumed += 2;
-            }
-            255 => {
-                if data.len() < 6 {
-                    return Err(EncodingError::BufferUnderflow);
-                }
-                length = u32::from_be_bytes([data[2], data[3], data[4], data[5]]) as usize;
-                consumed += 4;
-            }
-        }
-    }
-
-    Ok((tag, length, consumed))
-}
-
-/// Encode a BACnet application tag
-pub fn encode_application_tag(buffer: &mut Vec<u8>, tag: ApplicationTag, length: usize) {
-    let tag_byte = if length < 5 {
-        (tag as u8) << 4 | (length as u8)
-    } else {
-        (tag as u8) << 4 | 5
-    };
-
-    buffer.push(tag_byte);
-
-    if length >= 5 {
-        if length < 254 {
-            buffer.push(length as u8);
-        } else if length < 65536 {
-            buffer.push(254);
-            buffer.extend_from_slice(&(length as u16).to_be_bytes());
-        } else {
-            buffer.push(255);
-            buffer.extend_from_slice(&(length as u32).to_be_bytes());
-        }
-    }
-}
-
-/// Decode a BACnet application tag
-pub fn decode_application_tag(data: &[u8]) -> Result<(ApplicationTag, usize, usize)> {
-    if data.is_empty() {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    let tag_byte = data[0];
-    let tag = ApplicationTag::try_from(tag_byte >> 4)?;
-    let mut length = (tag_byte & 0x0F) as usize;
-    let mut consumed = 1;
-
-    if length == 5 {
-        if data.len() < 2 {
-            return Err(EncodingError::BufferUnderflow);
-        }
-
-        let len_byte = data[1];
-        consumed += 1;
-
-        match len_byte {
-            0..=253 => {
-                length = len_byte as usize;
-            }
-            254 => {
-                if data.len() < 4 {
-                    return Err(EncodingError::BufferUnderflow);
-                }
-                length = u16::from_be_bytes([data[2], data[3]]) as usize;
-                consumed += 2;
-            }
-            255 => {
-                if data.len() < 6 {
-                    return Err(EncodingError::BufferUnderflow);
-                }
-                length = u32::from_be_bytes([data[2], data[3], data[4], data[5]]) as usize;
-                consumed += 4;
-            }
-        }
-    }
-
-    Ok((tag, length, consumed))
-}
-
 /// Encode a BACnet boolean value
 pub fn encode_boolean(buffer: &mut Vec<u8>, value: bool) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Boolean, if value { 1 } else { 0 });
+    Tag {
+        number: ApplicationTagNumber::Boolean as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(if value { 1 } else { 0 }),
+    }
+    .encode(buffer)?;
     Ok(())
 }
 
 /// Decode a BACnet boolean value
 pub fn decode_boolean(data: &[u8]) -> Result<(bool, usize)> {
-    let (tag, length, consumed) = decode_application_tag(data)?;
+    let (t, consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::Boolean {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Boolean as u32 {
         return Err(EncodingError::InvalidTag);
     }
 
-    let value = match length {
+    let value = match t.content_length().unwrap_or(0) {
         0 => false,
         1 => true,
         _ => return Err(EncodingError::InvalidLength),
@@ -363,7 +229,12 @@ pub fn encode_unsigned(buffer: &mut Vec<u8>, value: u32) -> Result<()> {
         value.to_be_bytes().to_vec()
     };
 
-    encode_application_tag(buffer, ApplicationTag::UnsignedInt, bytes.len());
+    Tag {
+        number: ApplicationTagNumber::UnsignedInt as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(bytes.len() as u32),
+    }
+    .encode(buffer)?;
     buffer.extend_from_slice(&bytes);
     Ok(())
 }
@@ -384,17 +255,24 @@ pub fn encode_unsigned64(buffer: &mut Vec<u8>, value: u64) {
         value.to_be_bytes().to_vec()
     };
 
-    encode_application_tag(buffer, ApplicationTag::UnsignedInt, bytes.len());
+    Tag {
+        number: ApplicationTagNumber::UnsignedInt as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(bytes.len() as u32),
+    }
+    .encode(buffer)
+    .expect("unsigned integer encodings are never longer than 8 octets");
     buffer.extend_from_slice(&bytes);
 }
 
 /// Decode a BACnet unsigned integer
 pub fn decode_unsigned(data: &[u8]) -> Result<(u32, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::UnsignedInt {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::UnsignedInt as u32 {
         return Err(EncodingError::InvalidTag);
     }
+    let length = t.content_length().unwrap_or(0) as usize;
 
     if data.len() < consumed + length {
         return Err(EncodingError::BufferUnderflow);
@@ -422,11 +300,12 @@ pub fn decode_unsigned(data: &[u8]) -> Result<(u32, usize)> {
 
 /// Decode a BACnet unsigned integer into a u64
 pub fn decode_unsigned64(data: &[u8]) -> Result<(u64, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::UnsignedInt {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::UnsignedInt as u32 {
         return Err(EncodingError::InvalidTag);
     }
+    let length = t.content_length().unwrap_or(0) as usize;
 
     if data.len() < consumed + length {
         return Err(EncodingError::BufferUnderflow);
@@ -455,7 +334,12 @@ pub fn encode_signed(buffer: &mut Vec<u8>, value: i32) -> Result<()> {
         value.to_be_bytes().to_vec()
     };
 
-    encode_application_tag(buffer, ApplicationTag::SignedInt, bytes.len());
+    Tag {
+        number: ApplicationTagNumber::SignedInt as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(bytes.len() as u32),
+    }
+    .encode(buffer)?;
     buffer.extend_from_slice(&bytes);
     Ok(())
 }
@@ -474,17 +358,24 @@ pub fn encode_signed64(buffer: &mut Vec<u8>, value: i64) {
         value.to_be_bytes().to_vec()
     };
 
-    encode_application_tag(buffer, ApplicationTag::SignedInt, bytes.len());
+    Tag {
+        number: ApplicationTagNumber::SignedInt as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(bytes.len() as u32),
+    }
+    .encode(buffer)
+    .expect("signed integer encodings are never longer than 8 octets");
     buffer.extend_from_slice(&bytes);
 }
 
 /// Decode a BACnet signed integer
 pub fn decode_signed(data: &[u8]) -> Result<(i32, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::SignedInt {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::SignedInt as u32 {
         return Err(EncodingError::InvalidTag);
     }
+    let length = t.content_length().unwrap_or(0) as usize;
 
     if data.len() < consumed + length {
         return Err(EncodingError::BufferUnderflow);
@@ -522,11 +413,12 @@ pub fn decode_signed(data: &[u8]) -> Result<(i32, usize)> {
 
 /// Decode a BACnet signed integer into a i64
 pub fn decode_signed64(data: &[u8]) -> Result<(i64, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::SignedInt {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::SignedInt as u32 {
         return Err(EncodingError::InvalidTag);
     }
+    let length = t.content_length().unwrap_or(0) as usize;
 
     if data.len() < consumed + length {
         return Err(EncodingError::BufferUnderflow);
@@ -564,20 +456,25 @@ pub fn decode_signed64(data: &[u8]) -> Result<(i64, usize)> {
 
 /// Encode a BACnet real (float) value
 pub fn encode_real(buffer: &mut Vec<u8>, value: f32) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Real, 4);
+    Tag {
+        number: ApplicationTagNumber::Real as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(4),
+    }
+    .encode(buffer)?;
     buffer.extend_from_slice(&value.to_be_bytes());
     Ok(())
 }
 
 /// Decode a BACnet real (float) value
 pub fn decode_real(data: &[u8]) -> Result<(f32, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::Real {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Real as u32 {
         return Err(EncodingError::InvalidTag);
     }
 
-    if length != 4 {
+    if t.content_length() != Some(4) {
         return Err(EncodingError::InvalidLength);
     }
 
@@ -598,18 +495,24 @@ pub fn decode_real(data: &[u8]) -> Result<(f32, usize)> {
 
 /// Encode a BACnet octet string
 pub fn encode_octet_string(buffer: &mut Vec<u8>, value: &[u8]) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::OctetString, value.len());
+    Tag {
+        number: ApplicationTagNumber::OctetString as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(value.len() as u32),
+    }
+    .encode(buffer)?;
     buffer.extend_from_slice(value);
     Ok(())
 }
 
 /// Decode a BACnet octet string
 pub fn decode_octet_string(data: &[u8]) -> Result<(Vec<u8>, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::OctetString {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::OctetString as u32 {
         return Err(EncodingError::InvalidTag);
     }
+    let length = t.content_length().unwrap_or(0) as usize;
 
     if data.len() < consumed + length {
         return Err(EncodingError::BufferUnderflow);
@@ -624,11 +527,12 @@ pub fn decode_octet_string(data: &[u8]) -> Result<(Vec<u8>, usize)> {
 /// Encode a BACnet character string
 pub fn encode_character_string(buffer: &mut Vec<u8>, value: &str) -> Result<()> {
     let string_bytes = value.as_bytes();
-    encode_application_tag(
-        buffer,
-        ApplicationTag::CharacterString,
-        string_bytes.len() + 1,
-    );
+    Tag {
+        number: ApplicationTagNumber::CharacterString as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(string_bytes.len() as u32 + 1),
+    }
+    .encode(buffer)?;
     buffer.push(0); // Character set encoding (0 = ANSI X3.4)
     buffer.extend_from_slice(string_bytes);
     Ok(())
@@ -636,11 +540,13 @@ pub fn encode_character_string(buffer: &mut Vec<u8>, value: &str) -> Result<()> 
 
 /// Decode a BACnet character string
 pub fn decode_character_string(data: &[u8]) -> Result<(String, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::CharacterString {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::CharacterString as u32
+    {
         return Err(EncodingError::InvalidTag);
     }
+    let length = t.content_length().unwrap_or(0) as usize;
 
     if data.len() < consumed + length || length == 0 {
         return Err(EncodingError::BufferUnderflow);
@@ -672,17 +578,24 @@ pub fn encode_enumerated(buffer: &mut Vec<u8>, value: u32) {
         value.to_be_bytes().to_vec()
     };
 
-    encode_application_tag(buffer, ApplicationTag::Enumerated, bytes.len());
+    Tag {
+        number: ApplicationTagNumber::Enumerated as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(bytes.len() as u32),
+    }
+    .encode(buffer)
+    .expect("enumerated encodings are never longer than 4 octets");
     buffer.extend_from_slice(&bytes);
 }
 
 /// Decode a BACnet enumerated value
 pub fn decode_enumerated(data: &[u8]) -> Result<(u32, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::Enumerated {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Enumerated as u32 {
         return Err(EncodingError::InvalidTag);
     }
+    let length = t.content_length().unwrap_or(0) as usize;
 
     if data.len() < consumed + length {
         return Err(EncodingError::BufferUnderflow);
@@ -710,7 +623,12 @@ pub fn decode_enumerated(data: &[u8]) -> Result<(u32, usize)> {
 
 /// Encode a BACnet date
 pub fn encode_date(buffer: &mut Vec<u8>, year: u16, month: u8, day: u8, weekday: u8) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Date, 4);
+    Tag {
+        number: ApplicationTagNumber::Date as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(4),
+    }
+    .encode(buffer)?;
     buffer.push(((year - 1900) % 256) as u8);
     buffer.push(month);
     buffer.push(day);
@@ -720,13 +638,13 @@ pub fn encode_date(buffer: &mut Vec<u8>, year: u16, month: u8, day: u8, weekday:
 
 /// Decode a BACnet date
 pub fn decode_date(data: &[u8]) -> Result<((u16, u8, u8, u8), usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::Date {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Date as u32 {
         return Err(EncodingError::InvalidTag);
     }
 
-    if length != 4 || data.len() < consumed + 4 {
+    if t.content_length() != Some(4) || data.len() < consumed + 4 {
         return Err(EncodingError::InvalidLength);
     }
 
@@ -751,7 +669,12 @@ pub fn encode_time(
     second: u8,
     hundredths: u8,
 ) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Time, 4);
+    Tag {
+        number: ApplicationTagNumber::Time as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(4),
+    }
+    .encode(buffer)?;
     buffer.push(hour);
     buffer.push(minute);
     buffer.push(second);
@@ -761,13 +684,13 @@ pub fn encode_time(
 
 /// Decode a BACnet time
 pub fn decode_time(data: &[u8]) -> Result<((u8, u8, u8, u8), usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::Time {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Time as u32 {
         return Err(EncodingError::InvalidTag);
     }
 
-    if length != 4 || data.len() < consumed + 4 {
+    if t.content_length() != Some(4) || data.len() < consumed + 4 {
         return Err(EncodingError::InvalidLength);
     }
 
@@ -785,20 +708,26 @@ pub fn encode_object_identifier(buffer: &mut Vec<u8>, object_id: ObjectIdentifie
     let object_id: u32 = object_id
         .try_into()
         .map_err(|_| EncodingError::ValueOutOfRange)?;
-    encode_application_tag(buffer, ApplicationTag::ObjectIdentifier, 4);
+    Tag {
+        number: ApplicationTagNumber::ObjectIdentifier as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(4),
+    }
+    .encode(buffer)?;
     buffer.extend_from_slice(&object_id.to_be_bytes());
     Ok(())
 }
 
 /// Decode a BACnet object identifier
 pub fn decode_object_identifier(data: &[u8]) -> Result<(ObjectIdentifier, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::ObjectIdentifier {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::ObjectIdentifier as u32
+    {
         return Err(EncodingError::InvalidTag);
     }
 
-    if length != 4 || data.len() < consumed + 4 {
+    if t.content_length() != Some(4) || data.len() < consumed + 4 {
         return Err(EncodingError::InvalidLength);
     }
 
@@ -819,20 +748,25 @@ pub fn decode_object_identifier(data: &[u8]) -> Result<(ObjectIdentifier, usize)
 
 /// Encode a BACnet double (64-bit float)
 pub fn encode_double(buffer: &mut Vec<u8>, value: f64) -> Result<()> {
-    encode_application_tag(buffer, ApplicationTag::Double, 8);
+    Tag {
+        number: ApplicationTagNumber::Double as u32,
+        class: TagClass::Application,
+        value: TagValue::Primitive(8),
+    }
+    .encode(buffer)?;
     buffer.extend_from_slice(&value.to_be_bytes());
     Ok(())
 }
 
 /// Decode a BACnet double (64-bit float)
 pub fn decode_double(data: &[u8]) -> Result<(f64, usize)> {
-    let (tag, length, mut consumed) = decode_application_tag(data)?;
+    let (t, mut consumed) = Tag::decode(data)?;
 
-    if tag != ApplicationTag::Double {
+    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Double as u32 {
         return Err(EncodingError::InvalidTag);
     }
 
-    if length != 8 || data.len() < consumed + 8 {
+    if t.content_length() != Some(8) || data.len() < consumed + 8 {
         return Err(EncodingError::InvalidLength);
     }
 
@@ -853,31 +787,17 @@ pub fn decode_double(data: &[u8]) -> Result<(f64, usize)> {
 
 /// Encode a context-specific tag
 pub fn encode_context_tag(buffer: &mut Vec<u8>, tag_number: u8, length: usize) -> Result<()> {
-    if tag_number > 14 {
-        return Err(EncodingError::ValueOutOfRange);
-    }
+    Tag::primitive(TagClass::Context, tag_number as u32, length as u32)?.encode(buffer)
+}
 
-    let tag_byte = if length < 5 {
-        0x08 | (tag_number << 4) | (length as u8)
-    } else {
-        0x08 | (tag_number << 4) | 5
-    };
+/// Encode the opening tag of a constructed context-specific encoding.
+pub fn encode_opening_tag(buffer: &mut Vec<u8>, tag_number: u8) -> Result<()> {
+    Tag::opening(tag_number as u32)?.encode(buffer)
+}
 
-    buffer.push(tag_byte);
-
-    if length >= 5 {
-        if length < 254 {
-            buffer.push(length as u8);
-        } else if length < 65536 {
-            buffer.push(254);
-            buffer.extend_from_slice(&(length as u16).to_be_bytes());
-        } else {
-            buffer.push(255);
-            buffer.extend_from_slice(&(length as u32).to_be_bytes());
-        }
-    }
-
-    Ok(())
+/// Encode the closing tag of a constructed context-specific encoding.
+pub fn encode_closing_tag(buffer: &mut Vec<u8>, tag_number: u8) -> Result<()> {
+    Tag::closing(tag_number as u32)?.encode(buffer)
 }
 
 /// Encode a context-specific unsigned integer
@@ -907,51 +827,22 @@ pub fn encode_context_unsigned(value: u32, tag_number: u8) -> Result<Vec<u8>> {
     Ok(buffer)
 }
 
-/// Decode a context-specific tag
+/// Decode a primitive context-specific tag.
+///
+/// Returns an error if the tag is context-specific but constructed (an
+/// opening or closing tag) — use [`tag::Tag::decode`] when either form is
+/// possible.
 pub fn decode_context_tag(data: &[u8]) -> Result<(u8, usize, usize)> {
-    if data.is_empty() {
+    let (t, consumed) = Tag::decode(data)?;
+
+    if t.class != TagClass::Context {
         return Err(EncodingError::InvalidTag);
     }
 
-    let tag_byte = data[0];
-    if (tag_byte & 0x08) == 0 {
-        return Err(EncodingError::InvalidTag);
+    match t.value {
+        TagValue::Primitive(length) => Ok((t.number as u8, length as usize, consumed)),
+        TagValue::Opening | TagValue::Closing => Err(EncodingError::InvalidTag),
     }
-
-    let tag_number = (tag_byte >> 4) & 0x0F;
-    let mut length = (tag_byte & 0x07) as usize;
-    let mut consumed = 1;
-
-    if length == 5 {
-        if data.len() < 2 {
-            return Err(EncodingError::BufferUnderflow);
-        }
-
-        let len_byte = data[1];
-        consumed += 1;
-
-        match len_byte {
-            0..=253 => {
-                length = len_byte as usize;
-            }
-            254 => {
-                if data.len() < 4 {
-                    return Err(EncodingError::BufferUnderflow);
-                }
-                length = u16::from_be_bytes([data[2], data[3]]) as usize;
-                consumed += 2;
-            }
-            255 => {
-                if data.len() < 6 {
-                    return Err(EncodingError::BufferUnderflow);
-                }
-                length = u32::from_be_bytes([data[2], data[3], data[4], data[5]]) as usize;
-                consumed += 4;
-            }
-        }
-    }
-
-    Ok((tag_number, length, consumed))
 }
 
 /// Decode a context-specific unsigned integer
@@ -980,6 +871,70 @@ pub fn decode_context_unsigned(data: &[u8], expected_tag: u8) -> Result<(u32, us
             u32::from_be_bytes(bytes)
         }
         4 => u32::from_be_bytes([
+            data[tag_consumed],
+            data[tag_consumed + 1],
+            data[tag_consumed + 2],
+            data[tag_consumed + 3],
+        ]),
+        _ => return Err(EncodingError::InvalidLength),
+    };
+
+    Ok((value, tag_consumed + length))
+}
+
+/// Encode a context-specific signed integer
+pub fn encode_context_signed(value: i32, tag_number: u8) -> Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+
+    // Determine the number of bytes needed for the signed value, using the
+    // smallest encoding possible (mirrors `encode_signed`'s application-tagged logic).
+    let bytes = if (-128..=127).contains(&value) {
+        vec![value as u8]
+    } else if (-32768..=32767).contains(&value) {
+        (value as i16).to_be_bytes().to_vec()
+    } else if (-8_388_608..=8_388_607).contains(&value) {
+        let bytes = value.to_be_bytes();
+        bytes[1..].to_vec()
+    } else {
+        value.to_be_bytes().to_vec()
+    };
+
+    encode_context_tag(&mut buffer, tag_number, bytes.len())?;
+    buffer.extend_from_slice(&bytes);
+
+    Ok(buffer)
+}
+
+/// Decode a context-specific signed integer
+pub fn decode_context_signed(data: &[u8], expected_tag: u8) -> Result<(i32, usize)> {
+    let (tag_number, length, tag_consumed) = decode_context_tag(data)?;
+
+    if tag_number != expected_tag {
+        return Err(EncodingError::InvalidTag);
+    }
+
+    if data.len() < tag_consumed + length {
+        return Err(EncodingError::BufferUnderflow);
+    }
+
+    let value = match length {
+        1 => data[tag_consumed] as i8 as i32,
+        2 => i16::from_be_bytes([data[tag_consumed], data[tag_consumed + 1]]) as i32,
+        3 => {
+            let sign_extend = if data[tag_consumed] & 0x80 != 0 {
+                0xFF
+            } else {
+                0x00
+            };
+            let bytes = [
+                sign_extend,
+                data[tag_consumed],
+                data[tag_consumed + 1],
+                data[tag_consumed + 2],
+            ];
+            i32::from_be_bytes(bytes)
+        }
+        4 => i32::from_be_bytes([
             data[tag_consumed],
             data[tag_consumed + 1],
             data[tag_consumed + 2],
@@ -1081,29 +1036,6 @@ pub fn decode_context_boolean(data: &[u8], expected_tag: u8) -> Result<(bool, us
     Ok((value, tag_consumed + 1))
 }
 
-impl TryFrom<u8> for ApplicationTag {
-    type Error = EncodingError;
-
-    fn try_from(value: u8) -> Result<Self> {
-        match value {
-            0 => Ok(ApplicationTag::Null),
-            1 => Ok(ApplicationTag::Boolean),
-            2 => Ok(ApplicationTag::UnsignedInt),
-            3 => Ok(ApplicationTag::SignedInt),
-            4 => Ok(ApplicationTag::Real),
-            5 => Ok(ApplicationTag::Double),
-            6 => Ok(ApplicationTag::OctetString),
-            7 => Ok(ApplicationTag::CharacterString),
-            8 => Ok(ApplicationTag::BitString),
-            9 => Ok(ApplicationTag::Enumerated),
-            10 => Ok(ApplicationTag::Date),
-            11 => Ok(ApplicationTag::Time),
-            12 => Ok(ApplicationTag::ObjectIdentifier),
-            _ => Err(EncodingError::InvalidTag),
-        }
-    }
-}
-
 /// Advanced encoding features and optimizations
 pub mod advanced {
     use super::*;
@@ -1170,109 +1102,6 @@ pub mod advanced {
         }
     }
 
-    /// Context-specific tag encoding/decoding
-    pub mod context {
-        use super::*;
-
-        /// Encode a context-specific tag
-        pub fn encode_context_tag(
-            buffer: &mut Vec<u8>,
-            tag_number: u8,
-            length: usize,
-        ) -> Result<()> {
-            if tag_number > 14 {
-                return Err(EncodingError::ValueOutOfRange);
-            }
-
-            let tag_byte = if length < 5 {
-                0x08 | (tag_number << 4) | (length as u8)
-            } else {
-                0x08 | (tag_number << 4) | 5
-            };
-
-            buffer.push(tag_byte);
-
-            if length >= 5 {
-                if length < 254 {
-                    buffer.push(length as u8);
-                } else if length < 65536 {
-                    buffer.push(254);
-                    buffer.extend_from_slice(&(length as u16).to_be_bytes());
-                } else {
-                    buffer.push(255);
-                    buffer.extend_from_slice(&(length as u32).to_be_bytes());
-                }
-            }
-
-            Ok(())
-        }
-
-        /// Decode a context-specific tag
-        pub fn decode_context_tag(data: &[u8]) -> Result<(u8, usize, usize)> {
-            if data.is_empty() {
-                return Err(EncodingError::InvalidTag);
-            }
-
-            let tag_byte = data[0];
-            if (tag_byte & 0x08) == 0 {
-                return Err(EncodingError::InvalidTag);
-            }
-
-            let tag_number = (tag_byte >> 4) & 0x0F;
-            let mut length = (tag_byte & 0x07) as usize;
-            let mut consumed = 1;
-
-            if length == 5 {
-                if data.len() < 2 {
-                    return Err(EncodingError::BufferUnderflow);
-                }
-
-                let len_byte = data[1];
-                consumed += 1;
-
-                match len_byte {
-                    0..=253 => {
-                        length = len_byte as usize;
-                    }
-                    254 => {
-                        if data.len() < 4 {
-                            return Err(EncodingError::BufferUnderflow);
-                        }
-                        length = u16::from_be_bytes([data[2], data[3]]) as usize;
-                        consumed += 2;
-                    }
-                    255 => {
-                        if data.len() < 6 {
-                            return Err(EncodingError::BufferUnderflow);
-                        }
-                        length = u32::from_be_bytes([data[2], data[3], data[4], data[5]]) as usize;
-                        consumed += 4;
-                    }
-                }
-            }
-
-            Ok((tag_number, length, consumed))
-        }
-
-        /// Encode opening tag for constructed data
-        pub fn encode_opening_tag(buffer: &mut Vec<u8>, tag_number: u8) -> Result<()> {
-            if tag_number > 14 {
-                return Err(EncodingError::ValueOutOfRange);
-            }
-            buffer.push(0x0E | (tag_number << 4));
-            Ok(())
-        }
-
-        /// Encode closing tag for constructed data
-        pub fn encode_closing_tag(buffer: &mut Vec<u8>, tag_number: u8) -> Result<()> {
-            if tag_number > 14 {
-                return Err(EncodingError::ValueOutOfRange);
-            }
-            buffer.push(0x0F | (tag_number << 4));
-            Ok(())
-        }
-    }
-
     /// Bit string encoding/decoding utilities
     pub mod bitstring {
         use super::*;
@@ -1287,7 +1116,12 @@ pub mod advanced {
                 8 - (bits.len() % 8)
             };
 
-            encode_application_tag(buffer, ApplicationTag::BitString, byte_count + 1);
+            Tag {
+                number: ApplicationTagNumber::BitString as u32,
+                class: TagClass::Application,
+                value: TagValue::Primitive((byte_count + 1) as u32),
+            }
+            .encode(buffer)?;
             buffer.push(unused_bits as u8);
 
             let mut current_byte = 0u8;
@@ -1315,11 +1149,14 @@ pub mod advanced {
 
         /// Decode a bit string
         pub fn decode_bit_string(data: &[u8]) -> Result<(Vec<bool>, usize)> {
-            let (tag, length, mut consumed) = decode_application_tag(data)?;
+            let (t, mut consumed) = Tag::decode(data)?;
 
-            if tag != ApplicationTag::BitString {
+            if t.class != TagClass::Application
+                || t.number != ApplicationTagNumber::BitString as u32
+            {
                 return Err(EncodingError::InvalidTag);
             }
+            let length = t.content_length().unwrap_or(0) as usize;
 
             if length == 0 || data.len() < consumed + length {
                 return Err(EncodingError::BufferUnderflow);
@@ -1460,21 +1297,34 @@ pub mod advanced {
 
                 let mut pos = 0;
                 while pos < data.len() {
-                    let (tag, length, consumed) = decode_application_tag(&data[pos..])?;
+                    let (t, consumed) = Tag::decode(&data[pos..])?;
+                    let length = t.content_length().unwrap_or(0) as usize;
                     pos += consumed;
 
-                    match tag {
-                        ApplicationTag::CharacterString if length > self.max_string_length => {
-                            return Err(EncodingError::InvalidFormat(
-                                "String too long".to_string(),
-                            ));
+                    // Only application-class tags carry a self-describing
+                    // datatype; a context-class tag's meaning depends on the
+                    // enclosing structure, which this flat scan does not
+                    // track, so it is skipped over rather than type-checked.
+                    if t.class == TagClass::Application {
+                        if let Ok(tag) = ApplicationTagNumber::try_from(t.number) {
+                            match tag {
+                                ApplicationTagNumber::CharacterString
+                                    if length > self.max_string_length =>
+                                {
+                                    return Err(EncodingError::InvalidFormat(
+                                        "String too long".to_string(),
+                                    ));
+                                }
+                                ApplicationTagNumber::OctetString
+                                    if length > self.max_string_length * 2 =>
+                                {
+                                    return Err(EncodingError::InvalidFormat(
+                                        "Octet string too long".to_string(),
+                                    ));
+                                }
+                                _ => {}
+                            }
                         }
-                        ApplicationTag::OctetString if length > self.max_string_length * 2 => {
-                            return Err(EncodingError::InvalidFormat(
-                                "Octet string too long".to_string(),
-                            ));
-                        }
-                        _ => {}
                     }
 
                     pos += length;
@@ -1506,7 +1356,7 @@ impl EncodingStream {
     /// Encode an application tagged value
     pub fn encode_tagged<T: EncodableValue>(
         &mut self,
-        tag: ApplicationTag,
+        tag: ApplicationTagNumber,
         value: T,
     ) -> Result<()> {
         if self.buffer.len() >= self.max_size {
@@ -1543,24 +1393,24 @@ impl EncodingStream {
 /// Trait for values that can be encoded
 pub trait EncodableValue {
     /// Encode with application tag
-    fn encode_to(&self, tag: ApplicationTag, buffer: &mut Vec<u8>) -> Result<()>;
+    fn encode_to(&self, tag: ApplicationTagNumber, buffer: &mut Vec<u8>) -> Result<()>;
 
     /// Encode with context tag
     fn encode_context_to(&self, tag_number: u8, buffer: &mut Vec<u8>) -> Result<()>;
 }
 
 impl EncodableValue for bool {
-    fn encode_to(&self, _tag: ApplicationTag, buffer: &mut Vec<u8>) -> Result<()> {
+    fn encode_to(&self, _tag: ApplicationTagNumber, buffer: &mut Vec<u8>) -> Result<()> {
         encode_boolean(buffer, *self)
     }
 
     fn encode_context_to(&self, tag_number: u8, buffer: &mut Vec<u8>) -> Result<()> {
-        advanced::context::encode_context_tag(buffer, tag_number, if *self { 1 } else { 0 })
+        encode_context_tag(buffer, tag_number, if *self { 1 } else { 0 })
     }
 }
 
 impl EncodableValue for u32 {
-    fn encode_to(&self, _tag: ApplicationTag, buffer: &mut Vec<u8>) -> Result<()> {
+    fn encode_to(&self, _tag: ApplicationTagNumber, buffer: &mut Vec<u8>) -> Result<()> {
         encode_unsigned(buffer, *self)
     }
 
@@ -1568,14 +1418,14 @@ impl EncodableValue for u32 {
         let temp_buffer = Vec::new();
         let mut temp = temp_buffer;
         encode_unsigned(&mut temp, *self)?;
-        advanced::context::encode_context_tag(buffer, tag_number, temp.len() - 1)?;
+        encode_context_tag(buffer, tag_number, temp.len() - 1)?;
         buffer.extend_from_slice(&temp[1..]);
         Ok(())
     }
 }
 
 impl EncodableValue for i32 {
-    fn encode_to(&self, _tag: ApplicationTag, buffer: &mut Vec<u8>) -> Result<()> {
+    fn encode_to(&self, _tag: ApplicationTagNumber, buffer: &mut Vec<u8>) -> Result<()> {
         encode_signed(buffer, *self)
     }
 
@@ -1583,43 +1433,43 @@ impl EncodableValue for i32 {
         let temp_buffer = Vec::new();
         let mut temp = temp_buffer;
         encode_signed(&mut temp, *self)?;
-        advanced::context::encode_context_tag(buffer, tag_number, temp.len() - 1)?;
+        encode_context_tag(buffer, tag_number, temp.len() - 1)?;
         buffer.extend_from_slice(&temp[1..]);
         Ok(())
     }
 }
 
 impl EncodableValue for f32 {
-    fn encode_to(&self, _tag: ApplicationTag, buffer: &mut Vec<u8>) -> Result<()> {
+    fn encode_to(&self, _tag: ApplicationTagNumber, buffer: &mut Vec<u8>) -> Result<()> {
         encode_real(buffer, *self)
     }
 
     fn encode_context_to(&self, tag_number: u8, buffer: &mut Vec<u8>) -> Result<()> {
-        advanced::context::encode_context_tag(buffer, tag_number, 4)?;
+        encode_context_tag(buffer, tag_number, 4)?;
         buffer.extend_from_slice(&self.to_be_bytes());
         Ok(())
     }
 }
 
 impl EncodableValue for f64 {
-    fn encode_to(&self, _tag: ApplicationTag, buffer: &mut Vec<u8>) -> Result<()> {
+    fn encode_to(&self, _tag: ApplicationTagNumber, buffer: &mut Vec<u8>) -> Result<()> {
         encode_double(buffer, *self)
     }
 
     fn encode_context_to(&self, tag_number: u8, buffer: &mut Vec<u8>) -> Result<()> {
-        advanced::context::encode_context_tag(buffer, tag_number, 8)?;
+        encode_context_tag(buffer, tag_number, 8)?;
         buffer.extend_from_slice(&self.to_be_bytes());
         Ok(())
     }
 }
 
 impl EncodableValue for &str {
-    fn encode_to(&self, _tag: ApplicationTag, buffer: &mut Vec<u8>) -> Result<()> {
+    fn encode_to(&self, _tag: ApplicationTagNumber, buffer: &mut Vec<u8>) -> Result<()> {
         encode_character_string(buffer, self)
     }
 
     fn encode_context_to(&self, tag_number: u8, buffer: &mut Vec<u8>) -> Result<()> {
-        advanced::context::encode_context_tag(buffer, tag_number, self.len() + 1)?;
+        encode_context_tag(buffer, tag_number, self.len() + 1)?;
         buffer.push(0); // Character set
         buffer.extend_from_slice(self.as_bytes());
         Ok(())
@@ -1649,13 +1499,13 @@ impl<'a> DecodingStream<'a> {
     }
 
     /// Peek at the next tag without consuming
-    pub fn peek_tag(&self) -> Result<ApplicationTag> {
+    pub fn peek_tag(&self) -> Result<ApplicationTagNumber> {
         if self.position >= self.data.len() {
             return Err(EncodingError::UnexpectedEndOfData);
         }
 
         let tag_byte = self.data[self.position];
-        let tag = ApplicationTag::try_from(tag_byte >> 4)?;
+        let tag = ApplicationTagNumber::try_from((tag_byte >> 4) as u32)?;
         Ok(tag)
     }
 
@@ -1738,7 +1588,11 @@ impl<'a> DecodingStream<'a> {
 
     /// Skip a value
     pub fn skip_value(&mut self) -> Result<()> {
-        let (_tag, length, consumed) = decode_application_tag(&self.data[self.position..])?;
+        let (t, consumed) = Tag::decode(&self.data[self.position..])?;
+        if t.class != TagClass::Application {
+            return Err(EncodingError::InvalidTag);
+        }
+        let length = t.content_length().unwrap_or(0) as usize;
         self.position += consumed + length;
         Ok(())
     }
@@ -1774,17 +1628,17 @@ impl PropertyArrayEncoder {
     /// Add a property value
     pub fn add_property<T: EncodableValue>(&mut self, property_id: u32, value: T) -> Result<()> {
         // Encode property identifier with context tag 0
-        advanced::context::encode_context_tag(&mut self.buffer, 0, 4)?;
+        encode_context_tag(&mut self.buffer, 0, 4)?;
         self.buffer.extend_from_slice(&property_id.to_be_bytes());
 
         // Open context tag 1 for value
-        advanced::context::encode_opening_tag(&mut self.buffer, 1)?;
+        encode_opening_tag(&mut self.buffer, 1)?;
 
         // Encode the value
-        value.encode_to(ApplicationTag::Null, &mut self.buffer)?;
+        value.encode_to(ApplicationTagNumber::Null, &mut self.buffer)?;
 
         // Close context tag 1
-        advanced::context::encode_closing_tag(&mut self.buffer, 1)?;
+        encode_closing_tag(&mut self.buffer, 1)?;
 
         self.count += 1;
         Ok(())
@@ -1822,7 +1676,7 @@ impl ErrorEncoder {
     /// Encode an error class and code
     pub fn encode_error(&mut self, error_class: u32, error_code: u32) -> Result<()> {
         // Error class with context tag 0
-        advanced::context::encode_context_tag(
+        encode_context_tag(
             &mut self.buffer,
             0,
             if error_class <= 0xFF {
@@ -1836,7 +1690,7 @@ impl ErrorEncoder {
         encode_enumerated(&mut self.buffer, error_class);
 
         // Error code with context tag 1
-        advanced::context::encode_context_tag(
+        encode_context_tag(
             &mut self.buffer,
             1,
             if error_code <= 0xFF {
@@ -2211,7 +2065,11 @@ impl EncodingManager {
     }
 
     /// Encode a value with full management features
-    pub fn encode<T: EncodableValue>(&mut self, value: T, tag: ApplicationTag) -> Result<Vec<u8>> {
+    pub fn encode<T: EncodableValue>(
+        &mut self,
+        value: T,
+        tag: ApplicationTagNumber,
+    ) -> Result<Vec<u8>> {
         #[cfg(feature = "std")]
         let start_time = std::time::Instant::now();
 
@@ -2494,8 +2352,6 @@ mod tests {
 
     #[test]
     fn test_context_specific_encoding() {
-        use advanced::context::*;
-
         let mut buffer = Vec::new();
 
         // Test context-specific tag encoding
@@ -2509,8 +2365,6 @@ mod tests {
 
     #[test]
     fn test_opening_closing_tags() {
-        use advanced::context::*;
-
         let mut buffer = Vec::new();
 
         // Test opening and closing tags
@@ -2566,6 +2420,22 @@ mod tests {
     }
 
     #[test]
+    fn test_data_validator_accepts_context_tags() {
+        use advanced::validation::DataValidator;
+
+        let validator = DataValidator::new(10, 1000);
+
+        // A real WritePropertyRequest APDU wraps its parameters in
+        // context-class tags; the validator must not reject that as
+        // malformed just because the tags aren't application-class.
+        let buffer: [u8; 14] = [
+            0x0C, 0x00, 0x80, 0x00, 0x01, 0x19, 0x55, 0x3E, 0x44, 0x42, 0x28, 0x00, 0x00, 0x3F,
+        ];
+
+        assert!(validator.validate(&buffer).is_ok());
+    }
+
+    #[test]
     fn test_encode_decode_performance() {
         let mut buffer = Vec::new();
         let iterations = 1000;
@@ -2576,6 +2446,30 @@ mod tests {
             encode_unsigned(&mut buffer, i).unwrap();
             let (value, _) = decode_unsigned(&buffer).unwrap();
             assert_eq!(value, i);
+        }
+    }
+
+    #[test]
+    fn test_context_signed_round_trip() {
+        for &value in &[
+            0i32,
+            1,
+            -1,
+            127,
+            -128,
+            128,
+            -129,
+            32767,
+            -32768,
+            32768,
+            -32769,
+            i32::MAX,
+            i32::MIN,
+        ] {
+            let buffer = encode_context_signed(value, 7).unwrap();
+            let (decoded, consumed) = decode_context_signed(&buffer, 7).unwrap();
+            assert_eq!(decoded, value);
+            assert_eq!(consumed, buffer.len());
         }
     }
 
@@ -2628,32 +2522,5 @@ mod tests {
             let (value, _) = decode_unsigned64(&buffer).unwrap();
             assert_eq!(value, test_value);
         }
-    }
-
-    #[test]
-    fn test_decode_bacnet_tag() {
-        let data = [0x21];
-        let (tag, length, consumed) = decode_tag(&data).unwrap();
-        assert_eq!(tag, BACnetTag::Application(ApplicationTag::UnsignedInt));
-        assert_eq!(length, 1);
-        assert_eq!(consumed, 1);
-
-        let data = [0x1E];
-        let (tag, length, consumed) = decode_tag(&data).unwrap();
-        assert_eq!(tag, BACnetTag::Context(1));
-        assert_eq!(length, 6);
-        assert_eq!(consumed, 1);
-
-        let data = [0x0C];
-        let (tag, length, consumed) = decode_tag(&data).unwrap();
-        assert_eq!(tag, BACnetTag::Context(0));
-        assert_eq!(length, 4);
-        assert_eq!(consumed, 1);
-
-        let data = [0x35, 0x08];
-        let (tag, length, consumed) = decode_tag(&data).unwrap();
-        assert_eq!(tag, BACnetTag::Application(ApplicationTag::SignedInt));
-        assert_eq!(length, 8);
-        assert_eq!(consumed, 2);
     }
 }
