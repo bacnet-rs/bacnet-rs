@@ -144,6 +144,7 @@ use crate::object::ObjectIdentifier;
 
 pub mod character_string;
 pub mod integer;
+pub mod real;
 pub mod tag;
 
 pub use character_string::{
@@ -155,6 +156,7 @@ pub use integer::{
     encode_context_signed, encode_context_unsigned, encode_enumerated, encode_signed,
     encode_signed64, encode_unsigned, encode_unsigned64,
 };
+pub use real::{decode_double, decode_real, encode_double, encode_real};
 
 use tag::{ApplicationTagNumber, Tag, TagClass, TagValue};
 
@@ -227,45 +229,6 @@ pub fn decode_boolean(data: &[u8]) -> Result<(bool, usize)> {
         _ => return Err(EncodingError::InvalidLength),
     };
 
-    Ok((value, consumed))
-}
-
-/// Encode a BACnet real (float) value
-pub fn encode_real(buffer: &mut Vec<u8>, value: f32) -> Result<()> {
-    Tag {
-        number: ApplicationTagNumber::Real as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(4),
-    }
-    .encode(buffer)?;
-    buffer.extend_from_slice(&value.to_be_bytes());
-    Ok(())
-}
-
-/// Decode a BACnet real (float) value
-pub fn decode_real(data: &[u8]) -> Result<(f32, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Real as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    if t.content_length() != Some(4) {
-        return Err(EncodingError::InvalidLength);
-    }
-
-    if data.len() < consumed + 4 {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let value = f32::from_be_bytes([
-        data[consumed],
-        data[consumed + 1],
-        data[consumed + 2],
-        data[consumed + 3],
-    ]);
-
-    consumed += 4;
     Ok((value, consumed))
 }
 
@@ -423,45 +386,6 @@ pub fn decode_object_identifier(data: &[u8]) -> Result<(ObjectIdentifier, usize)
 
     consumed += 4;
     Ok((object_id, consumed))
-}
-
-/// Encode a BACnet double (64-bit float)
-pub fn encode_double(buffer: &mut Vec<u8>, value: f64) -> Result<()> {
-    Tag {
-        number: ApplicationTagNumber::Double as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(8),
-    }
-    .encode(buffer)?;
-    buffer.extend_from_slice(&value.to_be_bytes());
-    Ok(())
-}
-
-/// Decode a BACnet double (64-bit float)
-pub fn decode_double(data: &[u8]) -> Result<(f64, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Double as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    if t.content_length() != Some(8) || data.len() < consumed + 8 {
-        return Err(EncodingError::InvalidLength);
-    }
-
-    let value = f64::from_be_bytes([
-        data[consumed],
-        data[consumed + 1],
-        data[consumed + 2],
-        data[consumed + 3],
-        data[consumed + 4],
-        data[consumed + 5],
-        data[consumed + 6],
-        data[consumed + 7],
-    ]);
-
-    consumed += 8;
-    Ok((value, consumed))
 }
 
 /// Encode a context-specific tag
@@ -771,9 +695,7 @@ pub mod advanced {
 
             /// Fast encode real (32-bit float)
             pub fn encode_real_fast(&mut self, value: f32) -> Result<()> {
-                self.buffer.push(0x44);
-                self.buffer.extend_from_slice(&value.to_be_bytes());
-                Ok(())
+                encode_real(&mut self.buffer, value)
             }
         }
     }
@@ -1747,27 +1669,6 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_decode_real() {
-        let mut buffer = Vec::new();
-        let test_values = [
-            0.0,
-            1.0,
-            -1.0,
-            core::f32::consts::PI,
-            -273.15,
-            f32::MAX,
-            f32::MIN,
-        ];
-
-        for &test_value in &test_values {
-            buffer.clear();
-            encode_real(&mut buffer, test_value).unwrap();
-            let (value, _) = decode_real(&buffer).unwrap();
-            assert_eq!(value, test_value);
-        }
-    }
-
-    #[test]
     fn test_encode_decode_character_string() {
         let mut buffer = Vec::new();
         let test_strings = ["Hello", "BACnet", "Temperature Sensor", ""];
@@ -1823,27 +1724,6 @@ mod tests {
         let (object_id, _) = decode_object_identifier(&buffer).unwrap();
         assert_eq!(object_id.object_type, ObjectType::AnalogValue);
         assert_eq!(object_id.instance, 12345);
-    }
-
-    #[test]
-    fn test_encode_decode_double() {
-        let mut buffer = Vec::new();
-        let test_values = [
-            0.0,
-            1.0,
-            -1.0,
-            core::f64::consts::PI,
-            -273.15,
-            f64::MAX,
-            f64::MIN,
-        ];
-
-        for &test_value in &test_values {
-            buffer.clear();
-            encode_double(&mut buffer, test_value).unwrap();
-            let (value, _) = decode_double(&buffer).unwrap();
-            assert_eq!(value, test_value);
-        }
     }
 
     #[test]
