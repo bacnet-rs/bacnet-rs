@@ -120,6 +120,7 @@ jobs:
         features:
           - "" # default features
           - "--no-default-features --features std"
+          - "--no-default-features --features no-std"
           - "--all-features"
 
     steps:
@@ -147,6 +148,24 @@ jobs:
 
       - name: Test with features ${{ matrix.features }}
         run: cargo test ${{ matrix.features }} --verbose
+
+  # Build for a bare-metal target without std available
+  no-std-target:
+    name: no_std Target Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+
+      - name: Check no_std build
+        run: cargo check --no-default-features --features no-std --target thumbv7em-none-eabihf --verbose
+
+      - name: Check no_std build with serde
+        run: cargo check --no-default-features --features no-std,serde --target thumbv7em-none-eabihf --verbose
 
   # Security audit
   security-audit:
