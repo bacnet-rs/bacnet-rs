@@ -764,7 +764,10 @@ fn parse_read_property_ack_manual(data: &[u8]) -> Result<String, Box<dyn std::er
                 match Tag::decode(&data[pos..]) {
                     Ok((tag, _)) if tag == closing_tag_3 => break,
                     Ok((tag, consumed)) => {
-                        pos += consumed + tag.content_length().unwrap_or(0) as usize
+                        pos += consumed + tag.content_length().unwrap_or(0) as usize;
+                        if pos > data.len() {
+                            return Err("Could not parse property value".into());
+                        }
                     }
                     Err(_) => return Err("Could not parse property value".into()),
                 }

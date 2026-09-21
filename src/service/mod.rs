@@ -929,6 +929,9 @@ impl WritePropertyRequest {
                 break;
             }
             pos += consumed + tag.content_length().unwrap_or(0) as usize;
+            if pos > data.len() {
+                return Err(crate::encoding::EncodingError::BufferUnderflow);
+            }
         }
         let property_value = data[value_start..pos].to_vec();
 
@@ -2328,6 +2331,26 @@ mod tests {
         assert_eq!(decoded.object_identifier.instance, 1);
         assert_eq!(decoded.property_identifier, 85);
         assert_eq!(decoded.property_value, property_value);
+    }
+
+    #[test]
+    fn test_write_property_request_decode_rejects_truncated_length() {
+        let object_id = ObjectIdentifier::new(ObjectType::AnalogOutput, 1);
+
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&encode_context_object_id(object_id, 0).unwrap());
+        buffer.extend_from_slice(&encode_context_enumerated(85, 1).unwrap());
+        Tag::opening(3).unwrap().encode(&mut buffer).unwrap();
+
+        // A primitive tag declaring an implausibly large content length,
+        // with no data actually following it (and no closing tag 3), as a
+        // crafted or truncated APDU might.
+        Tag::primitive(TagClass::Application, 2, u32::MAX)
+            .unwrap()
+            .encode(&mut buffer)
+            .unwrap();
+
+        assert!(WritePropertyRequest::decode(&buffer).is_err());
     }
 
     #[test]
