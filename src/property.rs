@@ -204,8 +204,14 @@ pub fn decode_property_value(data: &[u8]) -> Result<(PropertyValue, usize), Enco
             Ok((PropertyValue::ObjectIdentifier(value), consumed))
         }
         _ => {
-            // Unknown tag - return raw data
-            Ok((PropertyValue::Unknown(data.to_vec()), consumed + length))
+            // Unknown/reserved tag - capture only this tag's own encoded
+            // bytes (header + content), not the whole remaining buffer, so
+            // the returned data stays consistent with the consumed count.
+            let end = consumed + length;
+            if end > data.len() {
+                return Err(EncodingError::BufferUnderflow);
+            }
+            Ok((PropertyValue::Unknown(data[..end].to_vec()), end))
         }
     }
 }
@@ -286,6 +292,25 @@ mod tests {
         let (value, consumed) = decode_property_value(&data).unwrap();
         assert_eq!(consumed, 3);
         assert_eq!(value, PropertyValue::Unsigned(300));
+    }
+
+    #[test]
+    fn test_decode_property_value_reserved_tag_does_not_overcapture() {
+        // Application-class tag number 13 (Reserved13, per the BACnet
+        // spec) with a zero-length primitive encoding, followed by bytes
+        // that belong to whatever comes after this value in the buffer.
+        // The Unknown payload and consumed count must cover only this
+        // tag's own bytes, not the trailing data.
+        let data = [0xD0, 0xAA, 0xBB];
+        let (value, consumed) = decode_property_value(&data).unwrap();
+        assert_eq!(consumed, 1);
+        assert_eq!(value, PropertyValue::Unknown(vec![0xD0]));
+
+        // Same, but with actual content octets present.
+        let data = [0xD2, 0x01, 0x02, 0xFF];
+        let (value, consumed) = decode_property_value(&data).unwrap();
+        assert_eq!(consumed, 3);
+        assert_eq!(value, PropertyValue::Unknown(vec![0xD2, 0x01, 0x02]));
     }
 
     #[test]
