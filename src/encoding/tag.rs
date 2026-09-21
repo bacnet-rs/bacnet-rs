@@ -217,6 +217,26 @@ impl Tag {
         }
     }
 
+    /// The number of content octets actually following this tag in the
+    /// encoded stream — 0 for a non-primitive tag, and for an
+    /// application-class Boolean tag (which, per the spec's special case,
+    /// is followed by no content octets regardless of its value), or
+    /// otherwise [`Tag::content_length`].
+    ///
+    /// Code that needs to skip over an already-decoded tag's content
+    /// without interpreting it (e.g. scanning for a matching closing tag)
+    /// should use this rather than [`Tag::content_length`], which would
+    /// misread an application Boolean's TRUE value (1) as a 1-octet content
+    /// length.
+    pub fn content_octets(&self) -> usize {
+        if self.class == TagClass::Application
+            && self.number == ApplicationTagNumber::Boolean as u32
+        {
+            return 0;
+        }
+        self.content_length().unwrap_or(0) as usize
+    }
+
     /// Encodes this tag (initial octet plus any extension octets) onto the
     /// end of `buffer`.
     pub fn encode(&self, buffer: &mut Vec<u8>) -> Result<()> {

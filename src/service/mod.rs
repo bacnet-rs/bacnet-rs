@@ -939,7 +939,7 @@ impl WritePropertyRequest {
                 TagValue::Closing => depth = depth.saturating_sub(1),
                 TagValue::Primitive(_) => {}
             }
-            pos += consumed + tag.content_length().unwrap_or(0) as usize;
+            pos += consumed + tag.content_octets();
             if pos > data.len() {
                 return Err(crate::encoding::EncodingError::BufferUnderflow);
             }
@@ -2400,6 +2400,30 @@ mod tests {
 
         // Priority, to confirm parsing resumes at the right position
         // after the outer closing tag rather than the nested one.
+        buffer.extend_from_slice(&encode_context_unsigned(8, 4).unwrap());
+
+        let decoded = WritePropertyRequest::decode(&buffer).unwrap();
+        assert_eq!(decoded.property_value, expected_value);
+        assert_eq!(decoded.priority, Some(8));
+    }
+
+    #[test]
+    fn test_write_property_request_decode_handles_application_boolean_true() {
+        let object_id = ObjectIdentifier::new(ObjectType::BinaryOutput, 1);
+
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&encode_context_object_id(object_id, 0).unwrap());
+        buffer.extend_from_slice(&encode_context_enumerated(85, 1).unwrap());
+        Tag::opening(3).unwrap().encode(&mut buffer).unwrap();
+
+        // An application-tagged Boolean TRUE: the value is carried in the
+        // tag's length/value/type field itself (1 = TRUE), with zero
+        // content octets following. The closing-tag scan must not mistake
+        // that "length" for an actual content octet to skip.
+        let expected_value = vec![0x11];
+        buffer.extend_from_slice(&expected_value);
+
+        Tag::closing(3).unwrap().encode(&mut buffer).unwrap();
         buffer.extend_from_slice(&encode_context_unsigned(8, 4).unwrap());
 
         let decoded = WritePropertyRequest::decode(&buffer).unwrap();
