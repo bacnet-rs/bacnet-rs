@@ -915,18 +915,29 @@ impl WritePropertyRequest {
         // Skip the encoded value's tagged elements to find the matching
         // closing tag, rather than scanning raw bytes (which could false-
         // match a content byte that happens to equal a closing-tag byte).
+        // Context tag numbers are scoped to their nesting level, so a
+        // nested constructed element may reuse number 3; track nesting
+        // depth and only treat a closing tag 3 at depth 0 as the match.
         let value_start = pos;
+        let mut depth: u32 = 0;
         loop {
             let (tag, consumed) = Tag::decode(&data[pos..])?;
-            if matches!(
-                tag,
-                Tag {
-                    class: TagClass::Context,
-                    number: 3,
-                    value: TagValue::Closing
-                }
-            ) {
+            if depth == 0
+                && matches!(
+                    tag,
+                    Tag {
+                        class: TagClass::Context,
+                        number: 3,
+                        value: TagValue::Closing
+                    }
+                )
+            {
                 break;
+            }
+            match tag.value {
+                TagValue::Opening => depth += 1,
+                TagValue::Closing => depth = depth.saturating_sub(1),
+                TagValue::Primitive(_) => {}
             }
             pos += consumed + tag.content_length().unwrap_or(0) as usize;
             if pos > data.len() {
@@ -2351,6 +2362,49 @@ mod tests {
             .unwrap();
 
         assert!(WritePropertyRequest::decode(&buffer).is_err());
+    }
+
+    #[test]
+    fn test_write_property_request_decode_handles_nested_reused_context_tag() {
+        let object_id = ObjectIdentifier::new(ObjectType::AnalogOutput, 1);
+
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&encode_context_object_id(object_id, 0).unwrap());
+        buffer.extend_from_slice(&encode_context_enumerated(85, 1).unwrap());
+
+        // Outer opening tag 3.
+        Tag::opening(3).unwrap().encode(&mut buffer).unwrap();
+
+        // The value itself contains its own nested constructed element
+        // that reuses context tag number 3 for its opening/closing pair,
+        // which the closing-tag scan must not mistake for the outer one.
+        let mut expected_value = Vec::new();
+        Tag::opening(3)
+            .unwrap()
+            .encode(&mut expected_value)
+            .unwrap();
+        Tag::primitive(TagClass::Application, 2, 1)
+            .unwrap()
+            .encode(&mut expected_value)
+            .unwrap();
+        expected_value.push(0xAA);
+        Tag::closing(3)
+            .unwrap()
+            .encode(&mut expected_value)
+            .unwrap();
+
+        buffer.extend_from_slice(&expected_value);
+
+        // Outer closing tag 3.
+        Tag::closing(3).unwrap().encode(&mut buffer).unwrap();
+
+        // Priority, to confirm parsing resumes at the right position
+        // after the outer closing tag rather than the nested one.
+        buffer.extend_from_slice(&encode_context_unsigned(8, 4).unwrap());
+
+        let decoded = WritePropertyRequest::decode(&buffer).unwrap();
+        assert_eq!(decoded.property_value, expected_value);
+        assert_eq!(decoded.priority, Some(8));
     }
 
     #[test]
