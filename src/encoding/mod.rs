@@ -205,7 +205,8 @@ pub fn decode_boolean(data: &[u8]) -> Result<(bool, usize)> {
         return Err(EncodingError::InvalidTag);
     }
 
-    let value = match t.content_length().unwrap_or(0) {
+    let length = t.content_length().ok_or(EncodingError::InvalidTag)?;
+    let value = match length {
         0 => false,
         1 => true,
         _ => return Err(EncodingError::InvalidLength),
@@ -2186,6 +2187,15 @@ mod tests {
         let (value, consumed) = decode_boolean(&buffer).unwrap();
         assert!(!value);
         assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn test_decode_boolean_rejects_illegal_opening_closing_lvt() {
+        // Application-class Boolean tag (number 1) whose LVT nibble (6) is
+        // an Opening tag marker, illegal per spec for application-class
+        // tags. content_length() returns None for this, which must not be
+        // silently treated as a valid zero-length (false) Boolean.
+        assert!(decode_boolean(&[0x16]).is_err());
     }
 
     #[test]
