@@ -62,6 +62,8 @@ use super::{
 #[cfg(not(feature = "std"))]
 use alloc::borrow::Cow;
 use core::fmt;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
 use std::borrow::Cow;
 
@@ -74,6 +76,7 @@ const CHARSET_ISO_8859_1: u8 = 0x05;
 
 /// The character set a BACnet CharacterString is encoded in
 /// (ASHRAE 135-2024, Clause 20.2.9).
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CharacterSet {
     /// ISO 10646 (UTF-8).
@@ -118,6 +121,7 @@ impl CharacterSet {
 /// Conversion to Rust text happens only on demand — see the module docs.
 /// Equality and hashing compare the charset and raw octets, so the same text
 /// in two different charsets is not equal.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CharacterString {
     charset: CharacterSet,

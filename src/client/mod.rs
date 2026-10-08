@@ -1165,12 +1165,12 @@ impl BacnetClient {
             match result.property_identifier {
                 PropertyIdentifier::ObjectName => {
                     if let Some(PropertyValue::CharacterString(s)) = first {
-                        info.object_name = Some(s);
+                        info.object_name = Some(s.to_string_lossy().into_owned());
                     }
                 }
                 PropertyIdentifier::Description => {
                     if let Some(PropertyValue::CharacterString(s)) = first {
-                        info.description = Some(s);
+                        info.description = Some(s.to_string_lossy().into_owned());
                     }
                 }
                 PropertyIdentifier::PresentValue => {

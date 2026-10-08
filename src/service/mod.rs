@@ -2834,7 +2834,7 @@ mod tests {
         assert_eq!(
             result.results[1].value,
             PropertyResultValue::Value(vec![property::PropertyValue::CharacterString(
-                "HS1Curve_Y3".to_string()
+                "HS1Curve_Y3".into()
             )])
         );
         assert_eq!(
@@ -2896,7 +2896,7 @@ mod tests {
         assert_eq!(
             result.results[8].value,
             PropertyResultValue::Value(vec![property::PropertyValue::CharacterString(
-                "Setpoint for third curvepoint for outdoor compensated setpoint HS1".to_string()
+                "Setpoint for third curvepoint for outdoor compensated setpoint HS1".into()
             )])
         );
         assert_eq!(
@@ -2927,7 +2927,7 @@ mod tests {
         assert_eq!(response.property_values.len(), 1);
         assert_eq!(
             response.property_values[0],
-            property::PropertyValue::CharacterString("CorrigoHeating".to_string())
+            property::PropertyValue::CharacterString("CorrigoHeating".into())
         );
 
         let mut encoded = Vec::new();

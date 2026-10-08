@@ -16,11 +16,11 @@ use crate::{
         advanced::bitstring::{decode_bit_string, encode_bit_string},
         decode_boolean, decode_character_string, decode_date, decode_double, decode_enumerated,
         decode_object_identifier, decode_octet_string, decode_real, decode_signed64, decode_time,
-        decode_unsigned64, encode_boolean, encode_character_string, encode_date, encode_double,
-        encode_enumerated, encode_object_identifier, encode_octet_string, encode_real,
-        encode_signed64, encode_time, encode_unsigned64,
+        decode_unsigned64, encode_boolean, encode_date, encode_double, encode_enumerated,
+        encode_object_identifier, encode_octet_string, encode_real, encode_signed64, encode_time,
+        encode_unsigned64,
         tag::{ApplicationTagNumber, Tag, TagClass, TagValue},
-        EncodingError,
+        CharacterString, EncodingError,
     },
     object::{EngineeringUnits, ObjectIdentifier},
 };
@@ -42,7 +42,7 @@ pub enum PropertyValue {
     /// Octet string value
     OctetString(Vec<u8>),
     /// Character string value
-    CharacterString(String),
+    CharacterString(CharacterString),
     /// Enumerated value
     Enumerated(u32),
     /// Bit string value
@@ -74,7 +74,7 @@ impl PropertyValue {
             }
             PropertyValue::Unsigned(u) => u.to_string(),
             PropertyValue::Signed(i) => i.to_string(),
-            PropertyValue::CharacterString(s) => s.clone(),
+            PropertyValue::CharacterString(s) => s.to_string_lossy().into_owned(),
             PropertyValue::Enumerated(e) => format!("Enum({})", e),
             PropertyValue::OctetString(s) => format!("OctetString({:X?})", s),
             PropertyValue::BitString(bits) => {
@@ -178,7 +178,7 @@ pub fn decode_property_value(data: &[u8]) -> Result<(PropertyValue, usize), Enco
         }
         ApplicationTagNumber::CharacterString => {
             let (value, consumed) = decode_character_string(data)?;
-            Ok((PropertyValue::CharacterString(value.try_into()?), consumed))
+            Ok((PropertyValue::CharacterString(value), consumed))
         }
         ApplicationTagNumber::BitString => {
             let (value, consumed) = decode_bit_string(data)?;
@@ -227,7 +227,7 @@ pub fn encode_property_value(
         PropertyValue::Unsigned(u) => encode_unsigned64(buffer, *u),
         PropertyValue::Signed(i) => encode_signed64(buffer, *i),
         PropertyValue::OctetString(s) => encode_octet_string(buffer, s)?,
-        PropertyValue::CharacterString(s) => encode_character_string(buffer, s)?,
+        PropertyValue::CharacterString(s) => s.encode(buffer)?,
         PropertyValue::Enumerated(e) => encode_enumerated(buffer, *e),
         PropertyValue::BitString(bits) => encode_bit_string(buffer, bits)?,
         PropertyValue::Date(y, m, d, w) => encode_date(buffer, *y, *m, *d, *w)?,
@@ -320,9 +320,25 @@ mod tests {
         let (value, consumed) = decode_property_value(&data).unwrap();
         assert_eq!(consumed, 8);
         if let PropertyValue::CharacterString(s) = value {
-            assert_eq!(s, "Hello");
+            assert_eq!(s.to_str().unwrap(), "Hello");
         } else {
             panic!("Expected CharacterString value");
+        }
+    }
+
+    #[test]
+    fn test_character_string_round_trips_original_charset() {
+        // DBCS code page 850 "Hi" followed by an invalid UTF-8 string: both
+        // decode, and both re-encode byte for byte.
+        for data in [
+            &[0x75, 0x05, 0x01, 0x03, 0x52, b'H', b'i'][..],
+            &[0x72, 0x00, 0xFF],
+        ] {
+            let (value, consumed) = decode_property_value(data).unwrap();
+            assert_eq!(consumed, data.len());
+            let mut buffer = Vec::new();
+            encode_property_value(&value, &mut buffer).unwrap();
+            assert_eq!(buffer, data);
         }
     }
 
@@ -355,7 +371,7 @@ mod tests {
         assert_eq!(PropertyValue::Boolean(true).as_display_string(), "True");
         assert_eq!(PropertyValue::Unsigned(42).as_display_string(), "42");
         assert_eq!(
-            PropertyValue::CharacterString("Test".to_string()).as_display_string(),
+            PropertyValue::CharacterString("Test".into()).as_display_string(),
             "Test"
         );
     }

@@ -585,7 +585,7 @@ fn read_property(
                                                 if let Some(PropertyValue::CharacterString(value)) =
                                                     value
                                                 {
-                                                    return Ok(value.clone());
+                                                    return Ok(value.to_string_lossy().into_owned());
                                                 } else {
                                                     return Err("No CharacterString value".into());
                                                 }
@@ -931,7 +931,7 @@ fn read_object_property(
                                     if let Some(PropertyValue::CharacterString(value)) =
                                         response.property_values.first()
                                     {
-                                        return Ok(value.clone());
+                                        return Ok(value.to_string_lossy().into_owned());
                                     } else {
                                         return Err("No CharacterString value".into());
                                     }
@@ -1031,7 +1031,7 @@ fn read_property_with_array_index(
                                     if let Some(PropertyValue::CharacterString(value)) =
                                         response.property_values.first()
                                     {
-                                        return Ok(value.clone());
+                                        return Ok(value.to_string_lossy().into_owned());
                                     } else {
                                         return Err("No CharacterString value".into());
                                     }
