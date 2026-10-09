@@ -137,17 +137,23 @@ use std::fmt;
 #[cfg(not(feature = "std"))]
 use alloc::{
     string::{String, ToString},
-    vec,
     vec::Vec,
 };
 
 use crate::object::ObjectIdentifier;
 
 pub mod character_string;
+pub mod integer;
 pub mod tag;
 
 pub use character_string::{
     decode_character_string, encode_character_string, CharacterSet, CharacterString,
+};
+pub use integer::{
+    decode_context_enumerated, decode_context_signed, decode_context_unsigned, decode_enumerated,
+    decode_signed, decode_signed64, decode_unsigned, decode_unsigned64, encode_context_enumerated,
+    encode_context_signed, encode_context_unsigned, encode_enumerated, encode_signed,
+    encode_signed64, encode_unsigned, encode_unsigned64,
 };
 
 use tag::{ApplicationTagNumber, Tag, TagClass, TagValue};
@@ -224,246 +230,6 @@ pub fn decode_boolean(data: &[u8]) -> Result<(bool, usize)> {
     Ok((value, consumed))
 }
 
-/// Encode a BACnet unsigned integer
-pub fn encode_unsigned(buffer: &mut Vec<u8>, value: u32) -> Result<()> {
-    let bytes = if value == 0 {
-        vec![0]
-    } else if value <= 0xFF {
-        vec![value as u8]
-    } else if value <= 0xFFFF {
-        (value as u16).to_be_bytes().to_vec()
-    } else if value <= 0xFFFFFF {
-        let bytes = value.to_be_bytes();
-        bytes[1..].to_vec()
-    } else {
-        value.to_be_bytes().to_vec()
-    };
-
-    Tag {
-        number: ApplicationTagNumber::UnsignedInt as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(bytes.len() as u32),
-    }
-    .encode(buffer)?;
-    buffer.extend_from_slice(&bytes);
-    Ok(())
-}
-
-pub fn encode_unsigned64(buffer: &mut Vec<u8>, value: u64) {
-    let bytes = if value == 0 {
-        vec![0]
-    } else if value <= 0xFF {
-        vec![value as u8]
-    } else if value <= 0xFFFF {
-        (value as u16).to_be_bytes().to_vec()
-    } else if value <= 0xFFFFFF {
-        let bytes = value.to_be_bytes();
-        bytes[1..].to_vec()
-    } else if value <= 0xFFFFFFFF {
-        (value as u32).to_be_bytes().to_vec()
-    } else {
-        value.to_be_bytes().to_vec()
-    };
-
-    Tag {
-        number: ApplicationTagNumber::UnsignedInt as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(bytes.len() as u32),
-    }
-    .encode(buffer)
-    .expect("unsigned integer encodings are never longer than 8 octets");
-    buffer.extend_from_slice(&bytes);
-}
-
-/// Decode a BACnet unsigned integer
-pub fn decode_unsigned(data: &[u8]) -> Result<(u32, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::UnsignedInt as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-    let length = t.content_length().unwrap_or(0) as usize;
-
-    if data.len() < consumed + length {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let value = match length {
-        1 => data[consumed] as u32,
-        2 => u16::from_be_bytes([data[consumed], data[consumed + 1]]) as u32,
-        3 => {
-            let bytes = [0, data[consumed], data[consumed + 1], data[consumed + 2]];
-            u32::from_be_bytes(bytes)
-        }
-        4 => u32::from_be_bytes([
-            data[consumed],
-            data[consumed + 1],
-            data[consumed + 2],
-            data[consumed + 3],
-        ]),
-        _ => return Err(EncodingError::InvalidLength),
-    };
-
-    consumed += length;
-    Ok((value, consumed))
-}
-
-/// Decode a BACnet unsigned integer into a u64
-pub fn decode_unsigned64(data: &[u8]) -> Result<(u64, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::UnsignedInt as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-    let length = t.content_length().unwrap_or(0) as usize;
-
-    if data.len() < consumed + length {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let unused = 8 - length;
-    let mut value = [0; 8];
-    value[unused..].copy_from_slice(&data[consumed..consumed + length]);
-
-    let value = u64::from_be_bytes(value);
-
-    consumed += length;
-    Ok((value, consumed))
-}
-
-/// Encode a BACnet signed integer
-pub fn encode_signed(buffer: &mut Vec<u8>, value: i32) -> Result<()> {
-    let bytes = if (-128..=127).contains(&value) {
-        vec![value as u8]
-    } else if (-32768..=32767).contains(&value) {
-        (value as i16).to_be_bytes().to_vec()
-    } else if (-8388608..=8388607).contains(&value) {
-        let bytes = value.to_be_bytes();
-        bytes[1..].to_vec()
-    } else {
-        value.to_be_bytes().to_vec()
-    };
-
-    Tag {
-        number: ApplicationTagNumber::SignedInt as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(bytes.len() as u32),
-    }
-    .encode(buffer)?;
-    buffer.extend_from_slice(&bytes);
-    Ok(())
-}
-
-pub fn encode_signed64(buffer: &mut Vec<u8>, value: i64) {
-    let bytes = if (-128..=127).contains(&value) {
-        vec![value as u8]
-    } else if (-32768..=32767).contains(&value) {
-        (value as i16).to_be_bytes().to_vec()
-    } else if (-8388608..=8388607).contains(&value) {
-        let bytes = value.to_be_bytes();
-        bytes[1..].to_vec()
-    } else if (i32::MIN as i64..=i32::MAX as i64).contains(&value) {
-        (value as i32).to_be_bytes().to_vec()
-    } else {
-        value.to_be_bytes().to_vec()
-    };
-
-    Tag {
-        number: ApplicationTagNumber::SignedInt as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(bytes.len() as u32),
-    }
-    .encode(buffer)
-    .expect("signed integer encodings are never longer than 8 octets");
-    buffer.extend_from_slice(&bytes);
-}
-
-/// Decode a BACnet signed integer
-pub fn decode_signed(data: &[u8]) -> Result<(i32, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::SignedInt as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-    let length = t.content_length().unwrap_or(0) as usize;
-
-    if data.len() < consumed + length {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let value = match length {
-        1 => data[consumed] as i8 as i32,
-        2 => i16::from_be_bytes([data[consumed], data[consumed + 1]]) as i32,
-        3 => {
-            let sign_extend = if data[consumed] & 0x80 != 0 {
-                0xFF
-            } else {
-                0x00
-            };
-            let bytes = [
-                sign_extend,
-                data[consumed],
-                data[consumed + 1],
-                data[consumed + 2],
-            ];
-            i32::from_be_bytes(bytes)
-        }
-        4 => i32::from_be_bytes([
-            data[consumed],
-            data[consumed + 1],
-            data[consumed + 2],
-            data[consumed + 3],
-        ]),
-        _ => return Err(EncodingError::InvalidLength),
-    };
-
-    consumed += length;
-    Ok((value, consumed))
-}
-
-/// Decode a BACnet signed integer into a i64
-pub fn decode_signed64(data: &[u8]) -> Result<(i64, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::SignedInt as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-    let length = t.content_length().unwrap_or(0) as usize;
-
-    if data.len() < consumed + length {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let unused = 8 - length;
-    let mut value = [0; 8];
-    value[unused..].copy_from_slice(&data[consumed..consumed + length]);
-
-    let value = match length {
-        1 => data[consumed] as i8 as i64,
-        2 => i16::from_be_bytes([data[consumed], data[consumed + 1]]) as i64,
-        v if (3..8).contains(&v) => {
-            let sign_extend = if data[consumed] & 0x80 != 0 {
-                0xFF
-            } else {
-                0x00
-            };
-
-            let mut value = [sign_extend; 8];
-            value[unused..].copy_from_slice(&data[consumed..consumed + length]);
-            i64::from_be_bytes(value)
-        }
-        8 => {
-            let mut value = [0; 8];
-            value.copy_from_slice(&data[consumed..consumed + length]);
-            i64::from_be_bytes(value)
-        }
-        _ => return Err(EncodingError::InvalidLength),
-    };
-
-    consumed += length;
-    Ok((value, consumed))
-}
-
 /// Encode a BACnet real (float) value
 pub fn encode_real(buffer: &mut Vec<u8>, value: f32) -> Result<()> {
     Tag {
@@ -531,62 +297,6 @@ pub fn decode_octet_string(data: &[u8]) -> Result<(Vec<u8>, usize)> {
     let value = data[consumed..consumed + length].to_vec();
     consumed += length;
 
-    Ok((value, consumed))
-}
-
-/// Encode a BACnet enumerated value
-pub fn encode_enumerated(buffer: &mut Vec<u8>, value: u32) {
-    let bytes = if value <= 0xFF {
-        vec![value as u8]
-    } else if value <= 0xFFFF {
-        (value as u16).to_be_bytes().to_vec()
-    } else if value <= 0xFFFFFF {
-        let bytes = value.to_be_bytes();
-        bytes[1..].to_vec()
-    } else {
-        value.to_be_bytes().to_vec()
-    };
-
-    Tag {
-        number: ApplicationTagNumber::Enumerated as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(bytes.len() as u32),
-    }
-    .encode(buffer)
-    .expect("enumerated encodings are never longer than 4 octets");
-    buffer.extend_from_slice(&bytes);
-}
-
-/// Decode a BACnet enumerated value
-pub fn decode_enumerated(data: &[u8]) -> Result<(u32, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Enumerated as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-    let length = t.content_length().unwrap_or(0) as usize;
-
-    if data.len() < consumed + length {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let value = match length {
-        1 => data[consumed] as u32,
-        2 => u16::from_be_bytes([data[consumed], data[consumed + 1]]) as u32,
-        3 => {
-            let bytes = [0, data[consumed], data[consumed + 1], data[consumed + 2]];
-            u32::from_be_bytes(bytes)
-        }
-        4 => u32::from_be_bytes([
-            data[consumed],
-            data[consumed + 1],
-            data[consumed + 2],
-            data[consumed + 3],
-        ]),
-        _ => return Err(EncodingError::InvalidLength),
-    };
-
-    consumed += length;
     Ok((value, consumed))
 }
 
@@ -769,33 +479,6 @@ pub fn encode_closing_tag(buffer: &mut Vec<u8>, tag_number: u8) -> Result<()> {
     Tag::closing(tag_number as u32)?.encode(buffer)
 }
 
-/// Encode a context-specific unsigned integer
-pub fn encode_context_unsigned(value: u32, tag_number: u8) -> Result<Vec<u8>> {
-    let mut buffer = Vec::new();
-
-    // Determine the number of bytes needed for the unsigned value
-    let bytes = if value == 0 {
-        vec![0]
-    } else if value <= 0xFF {
-        vec![value as u8]
-    } else if value <= 0xFFFF {
-        (value as u16).to_be_bytes().to_vec()
-    } else if value <= 0xFFFFFF {
-        let bytes = value.to_be_bytes();
-        bytes[1..].to_vec()
-    } else {
-        value.to_be_bytes().to_vec()
-    };
-
-    // Encode the context tag
-    encode_context_tag(&mut buffer, tag_number, bytes.len())?;
-
-    // Add the value bytes
-    buffer.extend_from_slice(&bytes);
-
-    Ok(buffer)
-}
-
 /// Decode a primitive context-specific tag.
 ///
 /// Returns an error if the tag is context-specific but constructed (an
@@ -812,119 +495,6 @@ pub fn decode_context_tag(data: &[u8]) -> Result<(u8, usize, usize)> {
         TagValue::Primitive(length) => Ok((t.number as u8, length as usize, consumed)),
         TagValue::Opening | TagValue::Closing => Err(EncodingError::InvalidTag),
     }
-}
-
-/// Decode a context-specific unsigned integer
-pub fn decode_context_unsigned(data: &[u8], expected_tag: u8) -> Result<(u32, usize)> {
-    let (tag_number, length, tag_consumed) = decode_context_tag(data)?;
-
-    if tag_number != expected_tag {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    if data.len() < tag_consumed + length {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let value = match length {
-        0 => 0,
-        1 => data[tag_consumed] as u32,
-        2 => u16::from_be_bytes([data[tag_consumed], data[tag_consumed + 1]]) as u32,
-        3 => {
-            let bytes = [
-                0,
-                data[tag_consumed],
-                data[tag_consumed + 1],
-                data[tag_consumed + 2],
-            ];
-            u32::from_be_bytes(bytes)
-        }
-        4 => u32::from_be_bytes([
-            data[tag_consumed],
-            data[tag_consumed + 1],
-            data[tag_consumed + 2],
-            data[tag_consumed + 3],
-        ]),
-        _ => return Err(EncodingError::InvalidLength),
-    };
-
-    Ok((value, tag_consumed + length))
-}
-
-/// Encode a context-specific signed integer
-pub fn encode_context_signed(value: i32, tag_number: u8) -> Result<Vec<u8>> {
-    let mut buffer = Vec::new();
-
-    // Determine the number of bytes needed for the signed value, using the
-    // smallest encoding possible (mirrors `encode_signed`'s application-tagged logic).
-    let bytes = if (-128..=127).contains(&value) {
-        vec![value as u8]
-    } else if (-32768..=32767).contains(&value) {
-        (value as i16).to_be_bytes().to_vec()
-    } else if (-8_388_608..=8_388_607).contains(&value) {
-        let bytes = value.to_be_bytes();
-        bytes[1..].to_vec()
-    } else {
-        value.to_be_bytes().to_vec()
-    };
-
-    encode_context_tag(&mut buffer, tag_number, bytes.len())?;
-    buffer.extend_from_slice(&bytes);
-
-    Ok(buffer)
-}
-
-/// Decode a context-specific signed integer
-pub fn decode_context_signed(data: &[u8], expected_tag: u8) -> Result<(i32, usize)> {
-    let (tag_number, length, tag_consumed) = decode_context_tag(data)?;
-
-    if tag_number != expected_tag {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    if data.len() < tag_consumed + length {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let value = match length {
-        1 => data[tag_consumed] as i8 as i32,
-        2 => i16::from_be_bytes([data[tag_consumed], data[tag_consumed + 1]]) as i32,
-        3 => {
-            let sign_extend = if data[tag_consumed] & 0x80 != 0 {
-                0xFF
-            } else {
-                0x00
-            };
-            let bytes = [
-                sign_extend,
-                data[tag_consumed],
-                data[tag_consumed + 1],
-                data[tag_consumed + 2],
-            ];
-            i32::from_be_bytes(bytes)
-        }
-        4 => i32::from_be_bytes([
-            data[tag_consumed],
-            data[tag_consumed + 1],
-            data[tag_consumed + 2],
-            data[tag_consumed + 3],
-        ]),
-        _ => return Err(EncodingError::InvalidLength),
-    };
-
-    Ok((value, tag_consumed + length))
-}
-
-/// Encode a context-specific enumerated value
-pub fn encode_context_enumerated(value: u32, tag_number: u8) -> Result<Vec<u8>> {
-    // Enumerated values use the same encoding as unsigned integers
-    encode_context_unsigned(value, tag_number)
-}
-
-/// Decode a context-specific enumerated value
-pub fn decode_context_enumerated(data: &[u8], expected_tag: u8) -> Result<(u32, usize)> {
-    // Enumerated values use the same decoding as unsigned integers
-    decode_context_unsigned(data, expected_tag)
 }
 
 /// Encode a context-specific object identifier
@@ -1190,30 +760,7 @@ pub mod advanced {
 
             /// Fast encode unsigned integer (optimized for common sizes)
             pub fn encode_unsigned_fast(&mut self, value: u32) -> Result<()> {
-                match value {
-                    0 => {
-                        self.buffer.extend_from_slice(&[0x21, 0x00]);
-                    }
-                    1..=255 => {
-                        self.buffer.extend_from_slice(&[0x21, value as u8]);
-                    }
-                    256..=65535 => {
-                        let bytes = (value as u16).to_be_bytes();
-                        self.buffer.extend_from_slice(&[0x22]);
-                        self.buffer.extend_from_slice(&bytes);
-                    }
-                    65536..=16777215 => {
-                        let bytes = value.to_be_bytes();
-                        self.buffer.extend_from_slice(&[0x23]);
-                        self.buffer.extend_from_slice(&bytes[1..]);
-                    }
-                    _ => {
-                        let bytes = value.to_be_bytes();
-                        self.buffer.extend_from_slice(&[0x24]);
-                        self.buffer.extend_from_slice(&bytes);
-                    }
-                }
-                Ok(())
+                encode_unsigned(&mut self.buffer, value)
             }
 
             /// Fast encode boolean
@@ -1384,11 +931,8 @@ impl EncodableValue for u32 {
     }
 
     fn encode_context_to(&self, tag_number: u8, buffer: &mut Vec<u8>) -> Result<()> {
-        let temp_buffer = Vec::new();
-        let mut temp = temp_buffer;
-        encode_unsigned(&mut temp, *self)?;
-        encode_context_tag(buffer, tag_number, temp.len() - 1)?;
-        buffer.extend_from_slice(&temp[1..]);
+        let encoded = encode_context_unsigned(*self, tag_number)?;
+        buffer.extend_from_slice(&encoded);
         Ok(())
     }
 }
@@ -1399,11 +943,8 @@ impl EncodableValue for i32 {
     }
 
     fn encode_context_to(&self, tag_number: u8, buffer: &mut Vec<u8>) -> Result<()> {
-        let temp_buffer = Vec::new();
-        let mut temp = temp_buffer;
-        encode_signed(&mut temp, *self)?;
-        encode_context_tag(buffer, tag_number, temp.len() - 1)?;
-        buffer.extend_from_slice(&temp[1..]);
+        let encoded = encode_context_signed(*self, tag_number)?;
+        buffer.extend_from_slice(&encoded);
         Ok(())
     }
 }
@@ -2149,6 +1690,8 @@ mod tests {
     use crate::ObjectType;
 
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
 
     #[test]
     fn test_encode_decode_boolean() {
@@ -2245,19 +1788,6 @@ mod tests {
         encode_octet_string(&mut buffer, &test_data).unwrap();
         let (decoded, _) = decode_octet_string(&buffer).unwrap();
         assert_eq!(decoded, test_data);
-    }
-
-    #[test]
-    fn test_encode_decode_enumerated() {
-        let mut buffer = Vec::new();
-        let test_values = [0, 1, 255, 256, 65535, 65536, 16777215];
-
-        for &test_value in &test_values {
-            buffer.clear();
-            encode_enumerated(&mut buffer, test_value);
-            let (value, _) = decode_enumerated(&buffer).unwrap();
-            assert_eq!(value, test_value);
-        }
     }
 
     #[test]
