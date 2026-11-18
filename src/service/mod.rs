@@ -2061,32 +2061,32 @@ impl BacnetDateTime {
         Self { date, time }
     }
 
-    /// Create from current system time (requires std feature)
+    /// Create from current system time in the local time zone (requires std feature)
     #[cfg(feature = "std")]
     pub fn now() -> Self {
-        use chrono::{Datelike, Local, Timelike};
+        Self::from_zoned(&jiff::ZonedDateTime::now())
+    }
 
-        let now = Local::now();
-        let year = now.year() as u16;
-        let month = now.month() as u8;
-        let day = now.day() as u8;
-        let weekday = now.weekday().number_from_monday() as u8; // BACnet uses 1=Monday
-        let hour = now.hour() as u8;
-        let minute = now.minute() as u8;
-        let second = now.second() as u8;
-        let hundredths = (now.nanosecond() / 10_000_000) as u8;
+    /// Create from current system time in UTC (requires std feature)
+    #[cfg(feature = "std")]
+    pub fn now_utc() -> Self {
+        Self::from_zoned(&jiff::Timestamp::now().to_zoned_datetime(jiff::tz::TimeZone::UTC))
+    }
 
+    /// Convert the civil date and time of a zoned datetime
+    #[cfg(feature = "std")]
+    fn from_zoned(zoned: &jiff::ZonedDateTime) -> Self {
         let date = crate::object::Date {
-            year,
-            month,
-            day,
-            weekday,
+            year: zoned.year() as u16,
+            month: zoned.month() as u8,
+            day: zoned.day() as u8,
+            weekday: zoned.weekday().to_monday_one_offset() as u8, // BACnet uses 1=Monday
         };
         let time = crate::object::Time {
-            hour,
-            minute,
-            second,
-            hundredths,
+            hour: zoned.hour() as u8,
+            minute: zoned.minute() as u8,
+            second: zoned.second() as u8,
+            hundredths: (zoned.subsec_nanosecond() / 10_000_000) as u8,
         };
         Self::new(date, time)
     }
@@ -2209,32 +2209,7 @@ impl UtcTimeSynchronizationRequest {
     /// Create UTC Time Synchronization request with current UTC time
     #[cfg(feature = "std")]
     pub fn now() -> Self {
-        use chrono::{Datelike, Timelike, Utc};
-
-        let now = Utc::now();
-        let year = now.year() as u16;
-        let month = now.month() as u8;
-        let day = now.day() as u8;
-        let weekday = now.weekday().number_from_monday() as u8;
-        let hour = now.hour() as u8;
-        let minute = now.minute() as u8;
-        let second = now.second() as u8;
-        let hundredths = (now.nanosecond() / 10_000_000) as u8;
-
-        let date = crate::object::Date {
-            year,
-            month,
-            day,
-            weekday,
-        };
-        let time = crate::object::Time {
-            hour,
-            minute,
-            second,
-            hundredths,
-        };
-        let utc_date_time = BacnetDateTime::new(date, time);
-        Self::new(utc_date_time)
+        Self::new(BacnetDateTime::now_utc())
     }
 
     /// Encode the UTC Time Synchronization request
@@ -2255,6 +2230,35 @@ mod tests {
     use crate::object::{ObjectIdentifier, ObjectType};
     #[cfg(not(feature = "std"))]
     use alloc::vec;
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_bacnet_datetime_from_zoned() {
+        // 2024-02-29 was a Thursday (BACnet weekday 4, with 1 = Monday)
+        let zoned = jiff::civil::date(2024, 2, 29)
+            .at(13, 45, 59, 870_000_000)
+            .to_zoned_datetime(jiff::tz::TimeZone::UTC)
+            .unwrap();
+        let dt = BacnetDateTime::from_zoned(&zoned);
+        assert_eq!(
+            dt.date,
+            crate::object::Date {
+                year: 2024,
+                month: 2,
+                day: 29,
+                weekday: 4,
+            }
+        );
+        assert_eq!(
+            dt.time,
+            crate::object::Time {
+                hour: 13,
+                minute: 45,
+                second: 59,
+                hundredths: 87,
+            }
+        );
+    }
 
     #[test]
     fn test_whois_request() {

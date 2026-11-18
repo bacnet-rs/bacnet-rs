@@ -29,7 +29,7 @@ if-addrs = { version = "0.13", optional = true }
 log = { version = "0.4", default-features = false }
 
 # Time handling
-chrono = { version = "0.4", default-features = false, features = ["alloc"], optional = true }
+jiff = { version = "1.0", default-features = false, optional = true }
 
 # CRC calculations
 crc = { version = "3.3.*", default-features = false }
@@ -64,8 +64,11 @@ std = [
     "socket2",
     "if-addrs",
     "log/std",
-    "chrono/std",
-    "chrono/clock",
+    "jiff/std",
+    "jiff/tz-system",
+    "jiff/tzdb-zoneinfo",
+    "jiff/tzdb-concatenated",
+    "jiff/tzdb-bundle-platform",
     "hex/std",
 ]
 async = ["tokio", "async-trait", "std"]
