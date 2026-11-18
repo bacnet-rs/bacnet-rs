@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `BacnetDateTime::now_utc()`, the UTC counterpart of `BacnetDateTime::now()` (requires the `std` feature)
+
+### Changed
+
+- Time handling moved from `chrono` 0.4 to `jiff` 1.0. `BacnetDateTime::now()` and
+  `UtcTimeSynchronizationRequest::now()` behave as before; the dependency is still only pulled in by the `std`
+  feature, so no-std builds are unaffected
+
 ## [0.3.2] - 2026-09-01
 
 This release adds **COV notification** support and **router discovery**, consolidates the BVLL header implementation,
