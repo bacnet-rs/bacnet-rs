@@ -926,10 +926,8 @@ impl<T: Clone> CircularBuffer<T> {
 
         if self.size < self.capacity {
             // Buffer not full, items are from 0 to head
-            for i in 0..self.size {
-                if let Some(item) = &self.buffer[i] {
-                    result.push(item.clone());
-                }
+            for item in self.buffer.iter().take(self.size).flatten() {
+                result.push(item.clone());
             }
         } else {
             // Buffer full, items wrap around

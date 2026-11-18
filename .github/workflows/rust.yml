@@ -268,7 +268,7 @@ jobs:
 
       - name: Generate coverage report
         run: |
-          grcov . --binary-path ./target/debug/deps/ -s . -t lcov --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage.lcov
+          grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage.lcov
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
