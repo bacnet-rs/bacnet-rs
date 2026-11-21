@@ -283,9 +283,9 @@ pub enum PropertyValue {
 /// BACnet date representation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Date {
-    pub year: u16,   // 1900-2155, 255 = unspecified
-    pub month: u8,   // 1-12, 13 = odd months, 14 = even months, 255 = unspecified
-    pub day: u8,     // 1-31, 32 = last day of month, 255 = unspecified
+    pub year: u16, // 1900-2154, 255 = unspecified (2155 is unrepresentable: its wire octet, 255, collides with the "unspecified" sentinel)
+    pub month: u8, // 1-12, 13 = odd months, 14 = even months, 255 = unspecified
+    pub day: u8,   // 1-31, 32 = last day of month, 255 = unspecified
     pub weekday: u8, // 1-7 (Mon-Sun), 255 = unspecified
 }
 

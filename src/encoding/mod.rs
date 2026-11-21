@@ -144,6 +144,7 @@ use crate::object::ObjectIdentifier;
 
 pub mod bit_string;
 pub mod character_string;
+pub mod date_time;
 pub mod integer;
 pub mod octet_string;
 pub mod real;
@@ -153,6 +154,7 @@ pub use bit_string::{decode_bit_string, encode_bit_string};
 pub use character_string::{
     decode_character_string, encode_character_string, CharacterSet, CharacterString,
 };
+pub use date_time::{decode_date, decode_time, encode_date, encode_time};
 pub use integer::{
     decode_context_enumerated, decode_context_signed, decode_context_unsigned, decode_enumerated,
     decode_signed, decode_signed64, decode_unsigned, decode_unsigned64, encode_context_enumerated,
@@ -234,88 +236,6 @@ pub fn decode_boolean(data: &[u8]) -> Result<(bool, usize)> {
     };
 
     Ok((value, consumed))
-}
-
-/// Encode a BACnet date
-pub fn encode_date(buffer: &mut Vec<u8>, year: u16, month: u8, day: u8, weekday: u8) -> Result<()> {
-    Tag {
-        number: ApplicationTagNumber::Date as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(4),
-    }
-    .encode(buffer)?;
-    buffer.push(((year - 1900) % 256) as u8);
-    buffer.push(month);
-    buffer.push(day);
-    buffer.push(weekday);
-    Ok(())
-}
-
-/// Decode a BACnet date
-pub fn decode_date(data: &[u8]) -> Result<((u16, u8, u8, u8), usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Date as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    if t.content_length() != Some(4) || data.len() < consumed + 4 {
-        return Err(EncodingError::InvalidLength);
-    }
-
-    let year = if data[consumed] == 255 {
-        255
-    } else {
-        1900 + data[consumed] as u16
-    };
-    let month = data[consumed + 1];
-    let day = data[consumed + 2];
-    let weekday = data[consumed + 3];
-
-    consumed += 4;
-    Ok(((year, month, day, weekday), consumed))
-}
-
-/// Encode a BACnet time
-pub fn encode_time(
-    buffer: &mut Vec<u8>,
-    hour: u8,
-    minute: u8,
-    second: u8,
-    hundredths: u8,
-) -> Result<()> {
-    Tag {
-        number: ApplicationTagNumber::Time as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(4),
-    }
-    .encode(buffer)?;
-    buffer.push(hour);
-    buffer.push(minute);
-    buffer.push(second);
-    buffer.push(hundredths);
-    Ok(())
-}
-
-/// Decode a BACnet time
-pub fn decode_time(data: &[u8]) -> Result<((u8, u8, u8, u8), usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::Time as u32 {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    if t.content_length() != Some(4) || data.len() < consumed + 4 {
-        return Err(EncodingError::InvalidLength);
-    }
-
-    let hour = data[consumed];
-    let minute = data[consumed + 1];
-    let second = data[consumed + 2];
-    let hundredths = data[consumed + 3];
-
-    consumed += 4;
-    Ok(((hour, minute, second, hundredths), consumed))
 }
 
 /// Encode a BACnet object identifier
@@ -1562,30 +1482,6 @@ mod tests {
             let (value, _) = decode_character_string(&buffer).unwrap();
             assert_eq!(value.to_str().unwrap(), test_string);
         }
-    }
-
-    #[test]
-    fn test_encode_decode_date() {
-        let mut buffer = Vec::new();
-
-        encode_date(&mut buffer, 2024, 3, 15, 5).unwrap(); // Friday, March 15, 2024
-        let ((year, month, day, weekday), _) = decode_date(&buffer).unwrap();
-        assert_eq!(year, 2024);
-        assert_eq!(month, 3);
-        assert_eq!(day, 15);
-        assert_eq!(weekday, 5);
-    }
-
-    #[test]
-    fn test_encode_decode_time() {
-        let mut buffer = Vec::new();
-
-        encode_time(&mut buffer, 14, 30, 45, 50).unwrap(); // 14:30:45.50
-        let ((hour, minute, second, hundredths), _) = decode_time(&buffer).unwrap();
-        assert_eq!(hour, 14);
-        assert_eq!(minute, 30);
-        assert_eq!(second, 45);
-        assert_eq!(hundredths, 50);
     }
 
     #[test]
