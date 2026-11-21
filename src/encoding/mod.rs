@@ -146,6 +146,7 @@ pub mod bit_string;
 pub mod character_string;
 pub mod date_time;
 pub mod integer;
+pub mod object_identifier;
 pub mod octet_string;
 pub mod real;
 pub mod tag;
@@ -160,6 +161,10 @@ pub use integer::{
     decode_signed, decode_signed64, decode_unsigned, decode_unsigned64, encode_context_enumerated,
     encode_context_signed, encode_context_unsigned, encode_enumerated, encode_signed,
     encode_signed64, encode_unsigned, encode_unsigned64,
+};
+pub use object_identifier::{
+    decode_context_object_id, decode_object_identifier, encode_context_object_id,
+    encode_object_identifier,
 };
 pub use octet_string::{decode_octet_string, encode_octet_string};
 pub use real::{decode_double, decode_real, encode_double, encode_real};
@@ -238,49 +243,6 @@ pub fn decode_boolean(data: &[u8]) -> Result<(bool, usize)> {
     Ok((value, consumed))
 }
 
-/// Encode a BACnet object identifier
-pub fn encode_object_identifier(buffer: &mut Vec<u8>, object_id: ObjectIdentifier) -> Result<()> {
-    let object_id: u32 = object_id
-        .try_into()
-        .map_err(|_| EncodingError::ValueOutOfRange)?;
-    Tag {
-        number: ApplicationTagNumber::ObjectIdentifier as u32,
-        class: TagClass::Application,
-        value: TagValue::Primitive(4),
-    }
-    .encode(buffer)?;
-    buffer.extend_from_slice(&object_id.to_be_bytes());
-    Ok(())
-}
-
-/// Decode a BACnet object identifier
-pub fn decode_object_identifier(data: &[u8]) -> Result<(ObjectIdentifier, usize)> {
-    let (t, mut consumed) = Tag::decode(data)?;
-
-    if t.class != TagClass::Application || t.number != ApplicationTagNumber::ObjectIdentifier as u32
-    {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    if t.content_length() != Some(4) || data.len() < consumed + 4 {
-        return Err(EncodingError::InvalidLength);
-    }
-
-    let object_id = u32::from_be_bytes([
-        data[consumed],
-        data[consumed + 1],
-        data[consumed + 2],
-        data[consumed + 3],
-    ]);
-
-    let object_type = object_id >> 22;
-    let instance = object_id & 0x3FFFFF;
-    let object_id = ObjectIdentifier::new(object_type.into(), instance);
-
-    consumed += 4;
-    Ok((object_id, consumed))
-}
-
 /// Encode a context-specific tag
 pub fn encode_context_tag(buffer: &mut Vec<u8>, tag_number: u8, length: usize) -> Result<()> {
     Tag::primitive(TagClass::Context, tag_number as u32, length as u32)?.encode(buffer)
@@ -312,51 +274,6 @@ pub fn decode_context_tag(data: &[u8]) -> Result<(u8, usize, usize)> {
         TagValue::Primitive(length) => Ok((t.number as u8, length as usize, consumed)),
         TagValue::Opening | TagValue::Closing => Err(EncodingError::InvalidTag),
     }
-}
-
-/// Encode a context-specific object identifier
-pub fn encode_context_object_id(object_id: ObjectIdentifier, tag_number: u8) -> Result<Vec<u8>> {
-    let mut buffer = Vec::new();
-
-    // Combine object type and instance into 4-byte object identifier
-    let object_id: u32 = object_id.try_into()?;
-
-    // Encode context tag with length 4
-    encode_context_tag(&mut buffer, tag_number, 4)?;
-
-    // Add the object identifier bytes
-    buffer.extend_from_slice(&object_id.to_be_bytes());
-
-    Ok(buffer)
-}
-
-/// Decode a context-specific object identifier
-pub fn decode_context_object_id(
-    data: &[u8],
-    expected_tag: u8,
-) -> Result<(ObjectIdentifier, usize)> {
-    let (tag_number, length, tag_consumed) = decode_context_tag(data)?;
-
-    if tag_number != expected_tag {
-        return Err(EncodingError::InvalidTag);
-    }
-
-    if length != 4 {
-        return Err(EncodingError::InvalidLength);
-    }
-
-    if data.len() < tag_consumed + 4 {
-        return Err(EncodingError::BufferUnderflow);
-    }
-
-    let object_id = u32::from_be_bytes([
-        data[tag_consumed],
-        data[tag_consumed + 1],
-        data[tag_consumed + 2],
-        data[tag_consumed + 3],
-    ]);
-
-    Ok((object_id.into(), tag_consumed + 4))
 }
 
 pub fn encode_context_boolean(value: bool, tag_number: u8) -> Result<Vec<u8>> {
@@ -1412,8 +1329,6 @@ impl Default for EncodingManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::ObjectType;
-
     use super::*;
     #[cfg(not(feature = "std"))]
     use alloc::vec;
@@ -1482,17 +1397,6 @@ mod tests {
             let (value, _) = decode_character_string(&buffer).unwrap();
             assert_eq!(value.to_str().unwrap(), test_string);
         }
-    }
-
-    #[test]
-    fn test_encode_decode_object_identifier() {
-        let mut buffer = Vec::new();
-
-        let object_id = ObjectIdentifier::new(ObjectType::AnalogValue, 12345);
-        encode_object_identifier(&mut buffer, object_id).unwrap(); // Analog Value 12345
-        let (object_id, _) = decode_object_identifier(&buffer).unwrap();
-        assert_eq!(object_id.object_type, ObjectType::AnalogValue);
-        assert_eq!(object_id.instance, 12345);
     }
 
     #[test]
